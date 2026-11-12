@@ -157,10 +157,16 @@ static void venus_sys_error_handler(struct work_struct *work)
 		failed = true;
 	}
 
+	/*
+	 * Powering down holds the core in reset. An interrupt then would make the handler read its
+	 * registers there: an external abort. The core's interrupt stays masked until the next attempt.
+	 */
+	if (failed)
+		disable_irq(core->irq);
+
 	pm_runtime_put_sync(core->dev);
 
 	if (failed) {
-		disable_irq_nosync(core->irq);
 		dev_warn_ratelimited(core->dev,
 				     "System error has occurred, recovery failed to %s\n",
 				     err_msg);
