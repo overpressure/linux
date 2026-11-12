@@ -41,6 +41,7 @@ obj-$(CONFIG_DRM_PANEL_JDI_4K) += panel-jdi4k.o
 obj-$(CONFIG_DRM_PANEL_JDI_LT070ME05000) += panel-jdi-lt070me05000.o
 obj-$(CONFIG_DRM_PANEL_JDI_LPM026M648C) += panel-jdi-lpm026m648c.o
 obj-$(CONFIG_DRM_PANEL_DECKARD) += panel-deckard.o
+obj-$(CONFIG_DRM_PANEL_PICO4_LS026B3SA) += panel-pico4-ls026b3sa.o
 obj-$(CONFIG_DRM_PANEL_DECKARD) += panel-deckard-plano.o
 obj-$(CONFIG_DRM_PANEL_JDI_LPM102A188A) += panel-jdi-lpm102a188a.o
 obj-$(CONFIG_DRM_PANEL_JDI_R63452) += panel-jdi-fhd-r63452.o
