@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Every headset's branch and tag of this tree, built with overpressure's tooling (its build container
+# and the headset's build-tree.sh). A branch is built once: does it build. A tag
+# (<headset>/<version>-<n>) is built twice, by two jobs on two machines, and released only when both
+# give the same files. The layers without a headset (valve/, common/, sm8250/) have nothing to build.
+name: Build
+
+on:
+  push:
+    branches: ["*/*"]
+    tags: ["*/*-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      matrix:
+        build: ${{ fromJSON(startsWith(github.ref, 'refs/tags/') && '["a", "b"]' || '["a"]') }}
+    outputs:
+      device: ${{ steps.headset.outputs.device }}
+    steps:
+      - name: overpressure's tooling
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: overpressure/overpressure
+          path: overpressure
+      - name: The headset
+        id: headset
+        run: |
+          device=${GITHUB_REF_NAME%%/*}
+          if [ -f "overpressure/devices/$device/kernel/build-tree.sh" ]; then
+            echo "device=$device" >> "$GITHUB_OUTPUT"
+          else
+            echo "$device is a layer without a headset: nothing to build"
+          fi
+      - name: This tree
+        if: steps.headset.outputs.device
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: overpressure/out/linux
+          fetch-depth: 1
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        if: steps.headset.outputs.device
+        with:
+          version: "0.9.26"
+      - name: The build container
+        if: steps.headset.outputs.device
+        working-directory: overpressure
+        run: |
+          uv sync --locked
+          uv run python -m overpressure container build
+      - name: The kernel
+        if: steps.headset.outputs.device
+        working-directory: overpressure
+        run: |
+          uv run python -m overpressure container run -- \
+            bash "devices/${{ steps.headset.outputs.device }}/kernel/build-tree.sh" \
+            out/linux /var/tmp/kernel out/kernel
+          cat out/kernel/build.json
+      - name: Its files
+        if: steps.headset.outputs.device && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kernel-${{ matrix.build }}
+          path: overpressure/out/kernel
+          if-no-files-found: error
+
+  release:
+    needs: kernel
+    if: needs.kernel.outputs.device && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: kernel-*
+      - name: The same kernel twice
+        run: |
+          diff -r kernel-a kernel-b
+          cd kernel-a
+          sha256sum -- * > SHA256SUMS
+          cat build.json SHA256SUMS
+      - name: The release
+        working-directory: kernel-a
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          camera=$(python3 -c 'import json; print(json.load(open("build.json"))["camera_table"])')
+          if [ "$camera" != none ]; then
+            echo "this kernel compiles the camera table in ($camera): a release needs the driver to load it" >&2
+            exit 1
+          fi
+          {
+            echo "Built from ${GITHUB_SHA} by overpressure's tooling, twice on two machines, with the same result."
+            echo
+            echo '```'
+            python3 -c 'import json; print(json.load(open("build.json"))["banner"])'
+            cat SHA256SUMS
+            echo '```'
+          } > ../notes.md
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file ../notes.md -- *
