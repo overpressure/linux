@@ -696,6 +696,17 @@ config VIDEO_PICO4_OV7251
 	  to the controller radio: a sensor subdevice for CAMSS that powers and
 	  clocks them while they stream.
 
+config VIDEO_PICO4_IMX471
+	tristate "PICO 4 RGB camera (IMX471)"
+	depends on I2C && OF && COMMON_CLK && REGULATOR
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	select FW_LOADER
+	help
+	  The PICO 4's IMX471 RGB camera, in the one mode PICO OS's see-through
+	  uses: 2328x1748 RAW10 at 50 fps.
+
 config VIDEO_OV7640
 	tristate "OmniVision OV7640 sensor support"
 	help
