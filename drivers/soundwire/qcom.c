@@ -93,6 +93,8 @@
 #define SWRM_MCP_FRAME_CTRL_BANK_ADDR(m)		(0x101C + 0x40 * (m))
 #define SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK			GENMASK(2, 0)
 #define SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK			GENMASK(7, 3)
+#define SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_BMSK		GENMASK(23, 16)
+#define SWRM_SSP_RATE_HZ					4000
 #define SWRM_MCP_BUS_CTRL					0x1044
 #define SWRM_MCP_BUS_CLK_START					BIT(1)
 #define SWRM_MCP_CFG_ADDR					0x1048
@@ -1014,12 +1016,16 @@ static int qcom_swrm_pre_bank_switch(struct sdw_bus *bus)
 {
 	u32 reg = SWRM_MCP_FRAME_CTRL_BANK_ADDR(bus->params.next_bank);
 	struct qcom_swrm_ctrl *ctrl = to_qcom_sdw(bus);
+	u32 frame_bits = sdw_rows[ctrl->rows_index] * sdw_cols[ctrl->cols_index];
 	u32 val;
 
 	ctrl->reg_read(ctrl, reg, &val);
 
 	u32p_replace_bits(&val, ctrl->cols_index, SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK);
 	u32p_replace_bits(&val, ctrl->rows_index, SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK);
+	/* Synchronization points at 4 kHz: a whole number of every port's sample intervals. */
+	u32p_replace_bits(&val, bus->params.curr_dr_freq / (frame_bits * SWRM_SSP_RATE_HZ) - 1,
+			  SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_BMSK);
 
 	return ctrl->reg_write(ctrl, reg, val);
 }
@@ -1050,7 +1056,8 @@ static int qcom_swrm_transport_params(struct sdw_bus *bus,
 	pcfg = &ctrl->pconfig[params->port_num];
 
 	value = pcfg->off1 << SWRM_DP_PORT_CTRL_OFFSET1_SHFT;
-	value |= pcfg->off2 << SWRM_DP_PORT_CTRL_OFFSET2_SHFT;
+	if (pcfg->off2 != SWR_INVALID_PARAM)
+		value |= pcfg->off2 << SWRM_DP_PORT_CTRL_OFFSET2_SHFT;
 	value |= pcfg->si & 0xff;
 
 	ret = ctrl->reg_write(ctrl, reg, value);
