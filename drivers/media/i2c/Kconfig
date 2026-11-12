@@ -685,6 +685,17 @@ config VIDEO_OV7251
 	  To compile this driver as a module, choose M here: the
 	  module will be called ov7251.
 
+config VIDEO_PICO4_OV7251
+	tristate "PICO 4 tracking cameras (OV7251 on the controller radio)"
+	depends on OF && COMMON_CLK && REGULATOR
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	help
+	  The PICO 4's four OV7251 tracking cameras, whose control port belongs
+	  to the controller radio: a sensor subdevice for CAMSS that powers and
+	  clocks them while they stream.
+
 config VIDEO_OV7640
 	tristate "OmniVision OV7640 sensor support"
 	help
