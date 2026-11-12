@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Every headset's branch and tag of this tree, built with overpressure's tooling (its build container
-# and the headset's build-tree.sh). A branch is built once: does it build. A tag
-# (<headset>/<version>-<n>) is built twice, by two jobs on two machines, and released only when both
-# give the same files. The layers without a headset (valve/, common/, sm8250/) have nothing to build.
+# Every headset's branch, pull request and tag of this tree, built with overpressure's tooling (its
+# build container and the headset's build-tree.sh), after the headset's own tests. A branch or a pull
+# request into it is built once: does it build. A tag (<headset>/<version>-<n>) is built twice, by two
+# jobs on two machines, and released only when both give the same files. The layers without a headset
+# (valve/, common/, sm8250/) have nothing to build: their check passes at once.
 name: Build
 
 on:
   push:
     branches: ["*/*"]
     tags: ["*/*-*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -36,7 +38,8 @@ jobs:
       - name: The headset
         id: headset
         run: |
-          device=${GITHUB_REF_NAME%%/*}
+          ref=${GITHUB_BASE_REF:-$GITHUB_REF_NAME} # a pull request: the branch it goes into
+          device=${ref%%/*}
           if [ -f "overpressure/devices/$device/kernel/build-tree.sh" ]; then
             echo "device=$device" >> "$GITHUB_OUTPUT"
           else
