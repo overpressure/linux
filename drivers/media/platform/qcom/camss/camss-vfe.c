@@ -7,6 +7,7 @@
  * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  * Copyright (C) 2015-2018 Linaro Ltd.
  */
+#include <clocksource/arm_arch_timer.h>
 #include <linux/clk.h>
 #include <linux/completion.h>
 #include <linux/delay.h>
@@ -453,6 +454,29 @@ u32 vfe_hw_version(struct vfe_device *vfe)
  * @vfe: VFE Device
  * @wm: Write master id
  */
+/*
+ * A buffer's timestamp: its frame's start in hardware, as the CSID stamped it on the system counter,
+ * on CLOCK_MONOTONIC. The write master finishes a frame's readout later, by however long the
+ * interrupt waited too. A tracker wants the start of frame, which the stock camera stack reports.
+ */
+static u64 vfe_buf_timestamp(struct camss_video *video, u64 now)
+{
+	struct csid_device *csid = video->sof_csid;
+	u64 sof, counter;
+	u32 rate;
+
+	if (!csid)
+		return now;
+	sof = csid->res->hw_ops->sof_ticks(csid, video->sof_rdi);
+	counter = arch_timer_read_counter();
+	rate = arch_timer_get_rate();
+	/* Not stamped yet, or no stamp of this frame. */
+	if (!sof || !rate || counter < sof || counter - sof > rate / 10)
+		return now;
+
+	return now - mul_u64_u32_div(counter - sof, NSEC_PER_SEC, rate);
+}
+
 void vfe_buf_done(struct vfe_device *vfe, int wm, struct camss_buf_done_info *buf_done_info)
 {
 	struct vfe_line *line = &vfe->line[vfe->wm_output_map[wm]];
@@ -479,7 +503,7 @@ void vfe_buf_done(struct vfe_device *vfe, int wm, struct camss_buf_done_info *bu
 		goto out_unlock;
 	}
 
-	ready_buf->vb.vb2_buf.timestamp = ts;
+	ready_buf->vb.vb2_buf.timestamp = vfe_buf_timestamp(&line->video_out, ts);
 	ready_buf->vb.sequence = output->sequence++;
 
 	index = 0;
