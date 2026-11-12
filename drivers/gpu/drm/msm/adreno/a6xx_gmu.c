@@ -1065,7 +1065,8 @@ static int a6xx_gmu_fw_start(struct a6xx_gmu *gmu, unsigned int state)
 	 * POWER_CONTROL_SELECT_0 controls counters 0 - 3, each selector
 	 * is 8 bits wide.
 	 */
-	gmu_rmw(gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_0,
+	if (gmu->bcl)
+		gmu_rmw(gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_0,
 			0xffffff00, FIELD_PREP(GENMASK(31, 24), 0x19) |
 			FIELD_PREP(GENMASK(23, 16), 0x17) |
 			FIELD_PREP(GENMASK(15, 8), 0x13));
@@ -2467,9 +2468,14 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
 	if (ret)
 		goto detach_gxpd;
 
+	/*
+	 * BCL needs the secure world's GPU register service, which SM8650's firmware offers and
+	 * older SoCs' (SM8250's) refuse: without it the GPU runs as mainline drives it.
+	 */
 	ret = qcom_scm_kgsl_init_regs(GMU_BCL_EN_REQ);
+	gmu->bcl = !ret;
 	if (ret)
-		goto detach_gxpd;
+		dev_info(gmu->dev, "no Battery Current Limit (secure world: %d)\n", ret);
 
 	/* Set up the HFI queues */
 	a6xx_hfi_init(gmu);

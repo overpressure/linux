@@ -1005,9 +1005,11 @@ int a6xx_hfi_start(struct a6xx_gmu *gmu, int boot_state)
 	if (ret)
 		return ret;
 
-	ret = a6xx_hfi_enable_bcl(gmu);
-	if (ret)
-		return ret;
+	if (gmu->bcl) {
+		ret = a6xx_hfi_enable_bcl(gmu);
+		if (ret)
+			return ret;
+	}
 
 	ret = a6xx_hfi_enable_ifpc(gmu);
 	if (ret)
