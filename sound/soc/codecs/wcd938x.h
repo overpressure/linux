@@ -644,6 +644,7 @@ struct wcd938x_sdw_priv {
 	struct wcd938x_priv *wcd938x;
 	struct irq_domain *slave_irq;
 	struct regmap *regmap;
+	bool alert_pending;
 };
 
 #if IS_ENABLED(CONFIG_SND_SOC_WCD938X_SDW)
