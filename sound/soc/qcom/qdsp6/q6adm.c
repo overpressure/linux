@@ -25,6 +25,7 @@
 #define ADM_CMDRSP_DEVICE_OPEN_V5	0x00010329
 #define ADM_CMD_DEVICE_CLOSE_V5		0x00010327
 #define ADM_CMD_MATRIX_MAP_ROUTINGS_V5	0x00010325
+#define ADM_CMD_SET_PP_PARAMS_V6	0x0001035d
 
 #define TIMEOUT_MS 1000
 #define RESET_COPP_ID 99
@@ -75,6 +76,13 @@ struct q6adm_cmd_device_open_v5 {
 	u16 bit_width;
 	u32 sample_rate;
 	u8 dev_channel_mapping[8];
+} __packed;
+
+struct q6adm_cmd_set_pp_params {
+	u32 payload_addr_lsw;
+	u32 payload_addr_msw;
+	u32 mem_map_handle;
+	u32 payload_size;
 } __packed;
 
 struct q6adm_cmd_matrix_map_routings_v5 {
@@ -219,6 +227,7 @@ static int q6adm_callback(struct apr_device *adev, const struct apr_resp_pkt *da
 		switch (result->opcode) {
 		case ADM_CMD_DEVICE_OPEN_V5:
 		case ADM_CMD_DEVICE_CLOSE_V5:
+		case ADM_CMD_SET_PP_PARAMS_V6:
 			list_for_each_entry(copp, &adm->copps_list, node) {
 				if ((port_idx == copp->afe_port) && (copp_idx == copp->copp_idx)) {
 					copp->result = *result;
@@ -443,6 +452,51 @@ int q6adm_get_copp_id(struct q6copp *copp)
 	return copp->copp_idx;
 }
 EXPORT_SYMBOL_GPL(q6adm_get_copp_id);
+
+/**
+ * q6adm_set_pp_params() - set a COPP's processing parameters
+ *
+ * @dev: Pointer to adm child device.
+ * @copp: the COPP
+ * @data: the parameters, ADM set-parameter v3 entries (with instance ids)
+ * @size: their size
+ *
+ * The parameters go in band, after the command, as the vendor driver's set-parameter command
+ * carries them when it has no mapped buffer.
+ *
+ * Return: Will be an negative on error or a zero on success.
+ */
+int q6adm_set_pp_params(struct device *dev, struct q6copp *copp, const void *data, u32 size)
+{
+	struct q6adm *adm = dev_get_drvdata(dev->parent);
+	struct q6adm_cmd_set_pp_params *cmd;
+	int pkt_size = APR_HDR_SIZE + sizeof(*cmd) + size;
+	struct apr_pkt *pkt;
+	int ret;
+
+	void *p __free(kfree) = kzalloc(pkt_size, GFP_KERNEL);
+	if (!p)
+		return -ENOMEM;
+
+	pkt = p;
+	cmd = p + APR_HDR_SIZE;
+	pkt->hdr.hdr_field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD,
+					   APR_HDR_LEN(APR_HDR_SIZE),
+					   APR_PKT_VER);
+	pkt->hdr.pkt_size = pkt_size;
+	pkt->hdr.src_port = q6afe_get_port_id(copp->afe_port);
+	pkt->hdr.dest_port = copp->id;
+	pkt->hdr.token = copp->afe_port << 16 | copp->copp_idx;
+	pkt->hdr.opcode = ADM_CMD_SET_PP_PARAMS_V6;
+	cmd->payload_size = size;
+	memcpy(p + APR_HDR_SIZE + sizeof(*cmd), data, size);
+
+	/* The helper returns the time left of its wait on success. */
+	ret = q6adm_apr_send_copp_pkt(adm, copp, pkt, 0);
+
+	return ret < 0 ? ret : 0;
+}
+EXPORT_SYMBOL_GPL(q6adm_set_pp_params);
 
 /**
  * q6adm_matrix_map() - Map asm streams and afe ports using payload

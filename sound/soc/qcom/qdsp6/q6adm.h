@@ -21,6 +21,7 @@ struct q6copp *q6adm_open(struct device *dev, int port_id, int path, int rate,
 			   uint16_t bit_width, int app_type, int acdb_id);
 int q6adm_close(struct device *dev, struct q6copp *copp);
 int q6adm_get_copp_id(struct q6copp *copp);
+int q6adm_set_pp_params(struct device *dev, struct q6copp *copp, const void *data, u32 size);
 int q6adm_matrix_map(struct device *dev, int path,
 		     struct route_payload payload_map, int perf_mode);
 

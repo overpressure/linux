@@ -22,6 +22,7 @@
 #include "q6afe.h"
 #include "q6asm.h"
 #include "q6adm.h"
+#include "q6calibration-pico4.h"
 #include "q6routing.h"
 
 #define DRV_NAME "q6routing-component"
@@ -361,7 +362,7 @@ static struct msm_routing_data *routing_data;
 int q6routing_stream_open(int fedai_id, int perf_mode,
 			   int stream_id, int stream_type)
 {
-	int j, topology, num_copps = 0;
+	int j, topology, afe_port, num_copps = 0;
 	struct route_payload payload;
 	struct q6copp *copp;
 	int copp_idx;
@@ -390,16 +391,30 @@ int q6routing_stream_open(int fedai_id, int perf_mode,
 	session->bits_per_sample = pdata->bits_per_sample;
 
 	payload.num_copps = 0; /* only RX needs to use payload */
-	topology = NULL_COPP_TOPOLOGY;
+	/* PICO OS's topology for the path where its calibration has one. */
+	afe_port = q6afe_get_port_id(session->port_id);
+	topology = q6calibration_topology(afe_port, session->path_type);
+	if (topology < 0)
+		topology = NULL_COPP_TOPOLOGY;
 	copp = q6adm_open(routing_data->dev, session->port_id,
 			      session->path_type, session->sample_rate,
 			      session->channels, topology, perf_mode,
 			      session->bits_per_sample, 0, 0);
+	if (IS_ERR_OR_NULL(copp) && topology != NULL_COPP_TOPOLOGY) {
+		dev_err(routing_data->dev, "port 0x%x refused topology 0x%x\n", afe_port, topology);
+		topology = NULL_COPP_TOPOLOGY;
+		copp = q6adm_open(routing_data->dev, session->port_id,
+				  session->path_type, session->sample_rate,
+				  session->channels, topology, perf_mode,
+				  session->bits_per_sample, 0, 0);
+	}
 
 	if (IS_ERR_OR_NULL(copp)) {
 		mutex_unlock(&routing_data->lock);
 		return -EINVAL;
 	}
+	if (topology != NULL_COPP_TOPOLOGY)
+		q6calibration_apply(routing_data->dev, copp, afe_port, session->path_type);
 
 	copp_idx = q6adm_get_copp_id(copp);
 	set_bit(copp_idx, &session->copp_map);
