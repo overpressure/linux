@@ -348,6 +348,26 @@ static int video_check_format(struct camss_video *video)
 	return 0;
 }
 
+/* The CSID whose start-of-frame stamp dates this video device's buffers, if it has one. */
+static void video_set_sof_source(struct camss_video *video)
+{
+	struct media_pad *vfe_pad, *csid_pad;
+	struct csid_device *csid;
+
+	video->sof_csid = NULL;
+	vfe_pad = media_entity_remote_source_pad_unique(&video->vdev.entity);
+	if (IS_ERR(vfe_pad))
+		return;
+	csid_pad = media_entity_remote_source_pad_unique(vfe_pad->entity);
+	if (IS_ERR(csid_pad) || !is_csid_subdev(media_entity_to_v4l2_subdev(csid_pad->entity)))
+		return;
+	csid = v4l2_get_subdevdata(media_entity_to_v4l2_subdev(csid_pad->entity));
+	if (!csid->res->hw_ops->sof_ticks)
+		return;
+	video->sof_rdi = csid_pad->index - MSM_CSID_PAD_FIRST_SRC;
+	video->sof_csid = csid;
+}
+
 static int video_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct camss_video *video = vb2_get_drv_priv(q);
@@ -362,6 +382,8 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
 		dev_err(video->camss->dev, "Failed to start media pipeline: %d\n", ret);
 		goto flush_buffers;
 	}
+
+	video_set_sof_source(video);
 
 	// Ignore this check when using an extra plane
 	if(!video->has_extra_output_plane_cfg) {
