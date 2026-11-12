@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# A change moves up the layers by pull request (.github/layers, .github/scripts/layers.sh): when a
+# branch moves, every layer built on it that lacks its commits gets a pull request from it, unless one
+# is open. The Valve workflow starts this for valve/7.2, whose own tree has no workflows.
+name: Layers
+
+on:
+  push:
+    branches: ["*/*"]
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "the branch whose commits move up (valve/7.2, common/7.2, ...)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: layers-${{ inputs.from || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  layers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write # the pull requests up the layers
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - name: Pull requests from ${{ inputs.from || github.ref_name }}
+        run: bash .github/scripts/layers.sh "${{ inputs.from || github.ref_name }}"
