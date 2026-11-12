@@ -5322,6 +5322,7 @@ static int camss_subdev_notifier_bound(struct v4l2_async_notifier *async,
 
 	if (csd->interface.combo_id) {
 		csiphy->combo_mode = true;
+		csiphy->combo_subdev = subdev;
 		cfg = &csiphy->cfg2;
 	}
 
@@ -5365,6 +5366,8 @@ static int camss_subdev_notifier_complete(struct v4l2_async_notifier *async)
 		if (!strncmp(sensor->name, "og0ve10", 7)) {
 			printk(KERN_ERR "%s: apply combo mode hack to '%s'\n",
 					__func__, sensor->name);
+			pad_sink += 2;
+		} else if (csiphy->combo_subdev == sd) {
 			pad_sink += 2;
 		}
 
