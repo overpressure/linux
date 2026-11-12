@@ -84,6 +84,7 @@
 #define			PLAIN_ALIGNMENT_LSB	0
 #define			PLAIN_ALIGNMENT_MSB	1
 #define		RDI_CFG0_PLAIN_FORMAT		10
+#define			PLAIN_FORMAT_PLAIN16	1
 #define		RDI_CFG0_DECODE_FORMAT		12
 #define		RDI_CFG0_DATA_TYPE		16
 #define		RDI_CFG0_VIRTUAL_CHANNEL	22
@@ -262,8 +263,11 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8 
 {
 	/* Source pads matching RDI channels on hardware. Pad 1 -> RDI0, Pad 2 -> RDI1, etc. */
 	struct v4l2_mbus_framefmt *input_format = &csid->fmt[MSM_CSID_PAD_FIRST_SRC + port];
+	/* 16-bit samples: the RDI unpacks what comes in as 10-bit Bayer. */
+	const bool plain16 = input_format->code == MEDIA_BUS_FMT_SRGGB16_1X16;
 	const struct csid_format_info *format = csid_get_fmt_entry(csid->res->formats->formats,
 								   csid->res->formats->nformats,
+								   plain16 ? MEDIA_BUS_FMT_SRGGB10_1X10 :
 								   input_format->code);
 	u32 val;
 
@@ -284,8 +288,13 @@ static void __csid_configure_rdi_stream(struct csid_device *csid, u8 enable, u8 
 	val = 1 << RDI_CFG0_BYTE_CNTR_EN;
 	val |= 1 << RDI_CFG0_FORMAT_MEASURE_EN;
 	val |= 1 << RDI_CFG0_TIMESTAMP_EN;
-	/* note: for non-RDI path, this should be format->decode_format */
-	val |= DECODE_FORMAT_PAYLOAD_ONLY << RDI_CFG0_DECODE_FORMAT;
+	if (plain16) {
+		val |= format->decode_format << RDI_CFG0_DECODE_FORMAT;
+		val |= PLAIN_FORMAT_PLAIN16 << RDI_CFG0_PLAIN_FORMAT;
+	} else {
+		/* note: for non-RDI path, this should be format->decode_format */
+		val |= DECODE_FORMAT_PAYLOAD_ONLY << RDI_CFG0_DECODE_FORMAT;
+	}
 	val |= format->data_type << RDI_CFG0_DATA_TYPE;
 	val |= vc << RDI_CFG0_VIRTUAL_CHANNEL;
 	val |= dt_id << RDI_CFG0_DT_ID;
