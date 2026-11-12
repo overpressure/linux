@@ -1,0 +1,7 @@
+# The layers: each branch and the branch it takes its changes from, by pull request merged with a merge
+# commit (.github/workflows/layers.yml). valve/7.2 is Valve's own history, moved only forward
+# (.github/workflows/valve.yml).
+# FROM        INTO
+valve/7.2     common/7.2
+common/7.2    sm8250/7.2
+sm8250/7.2    phoenix/7.2

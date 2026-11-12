@@ -1,21 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Valve's kernel, followed (.github/scripts/valve-update.sh). Weekly, and on demand: the layers rebased
-# onto Valve's newest commit of its public branch (through the evlaV mirror) on <layer>-next branches,
-# proposed as a pull request per headset, whose branch is built. A conflict fails the run and names the
-# commit. "land", started by hand after the review, moves the layers and valve/7.2 to the proposal and
-# tags Valve's commit; it releases nothing.
+# Valve's kernel, followed (.github/scripts/valve.sh). Weekly, and on demand: valve/7.2 moves forward to
+# the newest commit of Valve's public branch (through the evlaV mirror), and the Layers workflow opens
+# the pull request that brings it into common/7.2. A rewritten Valve branch fails the run.
 name: Valve
 
 on:
   schedule:
     - cron: "23 5 * * 1"
   workflow_dispatch:
-    inputs:
-      action:
-        description: "propose: rebase onto Valve's newest; land: move the layers to the proposal"
-        type: choice
-        options: [propose, land]
-        default: propose
 
 permissions:
   contents: read
@@ -27,18 +19,15 @@ concurrency:
 jobs:
   valve:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
-      contents: write # the -next branches, the layers, Valve's tag
-      pull-requests: write # the proposal
-      actions: write # the proposal's build
+      contents: write # valve/7.2, forward only
+      actions: write # the Layers workflow
     env:
       GH_TOKEN: ${{ github.token }}
-      GIT_COMMITTER_NAME: overpressure
-      GIT_COMMITTER_EMAIL: overpressure@pico4
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - name: Valve's kernel, ${{ inputs.action || 'propose' }}
-        run: bash .github/scripts/valve-update.sh "${{ inputs.action || 'propose' }}"
+      - name: Valve's newest commit
+        run: bash .github/scripts/valve.sh
