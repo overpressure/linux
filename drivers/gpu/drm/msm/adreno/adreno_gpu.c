@@ -262,6 +262,9 @@ void adreno_check_and_reenable_stall(struct adreno_gpu *adreno_gpu)
 	struct msm_drm_private *priv = gpu->dev->dev_private;
 	unsigned long flags;
 
+	if (!stall_on_fault)
+		return;
+
 	/*
 	 * Wait until the cooldown period has passed and we would actually
 	 * collect a crashdump to re-enable stall-on-fault.

@@ -73,6 +73,8 @@ struct msm_load_state {
 	uint64_t last_gpu, last_cpu;
 };
 
+extern bool stall_on_fault;
+
 struct msm_drm_private {
 
 	struct drm_device *dev;
