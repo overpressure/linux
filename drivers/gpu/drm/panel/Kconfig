@@ -402,6 +402,17 @@ config DRM_PANEL_JDI_LPM026M648C
 	  The panel has a 2160x2160 resolution. It provides a MIPI DSI interface
 	  to the host.
 
+config DRM_PANEL_PICO4_LS026B3SA
+	tristate "PICO 4 display: two Sharp LS026B3SA panels on bonded DSI"
+	depends on OF && GPIOLIB
+	depends on DRM_MIPI_DSI
+	select DRM_DISPLAY_DSC_HELPER
+	select DRM_DISPLAY_HELPER
+	help
+	  Say Y here to drive the PICO 4's two 2160x2160 LCD panels, one on each of the SM8250's
+	  DSI links, as one bonded 4320x2160 output with DSC. The panels' command sequences come
+	  from the device tree.
+
 config DRM_PANEL_DECKARD
 	tristate "Deckard multi-panel support"
 	depends on OF && GPIOLIB
