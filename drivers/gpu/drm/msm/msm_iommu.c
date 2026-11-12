@@ -1008,10 +1008,10 @@ struct msm_mmu *msm_iommu_gpu_new(struct device *dev, struct device *lpac_dev,
 		iommu_set_fault_handler(iommu->lpac_domain, msm_lpac_fault_handler, iommu);
 
 	/* Enable stall on iommu fault: */
-	if (adreno_smmu->set_stall)
+	if (stall_on_fault && adreno_smmu->set_stall)
 		adreno_smmu->set_stall(adreno_smmu->cookie, true);
 
-	if (lpac_adreno_smmu && lpac_adreno_smmu->set_stall)
+	if (stall_on_fault && lpac_adreno_smmu && lpac_adreno_smmu->set_stall)
 		lpac_adreno_smmu->set_stall(lpac_adreno_smmu->cookie, true);
 
 	return mmu;

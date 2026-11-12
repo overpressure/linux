@@ -49,6 +49,9 @@
 bool dumpstate;
 MODULE_PARM_DESC(dumpstate, "Dump KMS state on errors");
 module_param(dumpstate, bool, 0600);
+bool stall_on_fault;
+MODULE_PARM_DESC(stall_on_fault, "Stall the GPU on a page fault and capture its state (debugging)");
+module_param(stall_on_fault, bool, 0400);
 
 static bool modeset = true;
 MODULE_PARM_DESC(modeset, "Use kernel modesetting [KMS] (1=on (default), 0=disable)");
@@ -154,7 +157,7 @@ static int msm_drm_init(struct device *dev, const struct drm_driver *drv,
 
 	/* Initialize stall-on-fault */
 	spin_lock_init(&priv->fault_stall_lock);
-	priv->stall_enabled = true;
+	priv->stall_enabled = stall_on_fault;
 
 	/* Teach lockdep about lock ordering wrt. shrinker: */
 	fs_reclaim_acquire(GFP_KERNEL);
