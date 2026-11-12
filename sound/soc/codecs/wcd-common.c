@@ -130,9 +130,14 @@ int wcd_interrupt_callback(struct sdw_slave *slave, struct irq_domain *slave_irq
 
 	do {
 		handle_nested_irq(irq_find_mapping(slave_irq, 0));
-		regmap_read(regmap, wcd_intr_status0, &sts1);
-		regmap_read(regmap, wcd_intr_status1, &sts2);
-		regmap_read(regmap, wcd_intr_status2, &sts3);
+		/*
+		 * A failed read says nothing about the status, and the status can't clear while the
+		 * codec is unreachable: stay here and this thread starves what runs behind it.
+		 */
+		if (regmap_read(regmap, wcd_intr_status0, &sts1) ||
+		    regmap_read(regmap, wcd_intr_status1, &sts2) ||
+		    regmap_read(regmap, wcd_intr_status2, &sts3))
+			break;
 
 	} while (sts1 || sts2 || sts3);
 
