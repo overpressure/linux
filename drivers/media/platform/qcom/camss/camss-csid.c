@@ -650,6 +650,16 @@ u32 csid_src_pad_code(struct csid_device *csid, u32 sink_code,
 	}
 
 	switch (sink_code) {
+	case MEDIA_BUS_FMT_SRGGB10_1X10:
+	{
+		u32 src_code[] = {
+			MEDIA_BUS_FMT_SRGGB10_1X10,
+			MEDIA_BUS_FMT_SRGGB16_1X16,
+		};
+
+		return csid_find_code(src_code, ARRAY_SIZE(src_code),
+				      match_format_idx, match_code);
+	}
 	case MEDIA_BUS_FMT_SBGGR10_1X10:
 	{
 		u32 src_code[] = {
