@@ -1522,7 +1522,8 @@ static int hw_init(struct msm_gpu *gpu)
 			  FIELD_PREP(GENMASK(7, 0), 0x4));
 
 		/* Enable time counter in BCL throthling */
-		gmu_rmw(&a6xx_gpu->gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_1,
+		if (a6xx_gpu->gmu.bcl)
+			gmu_rmw(&a6xx_gpu->gmu, REG_A6XX_GMU_CX_GMU_POWER_COUNTER_SELECT_1,
 				GENMASK(15, 8), FIELD_PREP(GENMASK(15, 8), 0x26));
 	}
 

@@ -116,6 +116,8 @@ struct a6xx_gmu {
 	struct a6xx_hfi_queue queues[HFI_MAX_QUEUES];
 
 	bool initialized;
+	/* the secure world enabled Battery Current Limit (not every SoC's offers it) */
+	bool bcl;
 	bool hung;
 	bool legacy; /* a618 or a630 */
 
