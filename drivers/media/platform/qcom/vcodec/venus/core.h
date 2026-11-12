@@ -454,6 +454,7 @@ enum venus_inst_modes {
  * @bit_depth:		current bitstream bit-depth
  * @pic_struct:		bitstream progressive vs interlaced
  * @next_buf_last: a flag to mark next queued capture buffer as last
+ * @dec_wait_parameter_sets: a decoder without pictures yet takes no data before the stream's headers
  * @drain_active:	Drain sequence is in progress
  * @flags:	bitmask flags describing current instance mode
  * @dpb_ids:	DPB buffer ID's
@@ -525,6 +526,7 @@ struct venus_inst {
 	unsigned int bit_depth;
 	unsigned int pic_struct;
 	bool next_buf_last;
+	bool dec_wait_parameter_sets;
 	bool drain_active;
 	enum venus_inst_modes flags;
 	struct ida dpb_ids;
