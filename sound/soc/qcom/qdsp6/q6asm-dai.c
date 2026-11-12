@@ -423,19 +423,6 @@ static int q6asm_dai_open(struct snd_soc_component *component,
 		}
 	}
 
-	ret = snd_pcm_hw_constraint_step(runtime, 0,
-		SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 480);
-	if (ret < 0) {
-		dev_err(dev, "constraint for period bytes step ret = %d\n",
-								ret);
-	}
-	ret = snd_pcm_hw_constraint_step(runtime, 0,
-		SNDRV_PCM_HW_PARAM_BUFFER_SIZE, 480);
-	if (ret < 0) {
-		dev_err(dev, "constraint for buffer bytes step ret = %d\n",
-								ret);
-	}
-
 	runtime->private_data = prtd;
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
