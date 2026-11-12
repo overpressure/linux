@@ -241,6 +241,8 @@ struct fastrpc_invoke_ctx {
 	struct completion work;
 	struct work_struct put_work;
 	struct fastrpc_msg msg;
+	/* Its thread's wait ended in -ERESTARTSYS; the call is still with the DSP. */
+	bool interrupted;
 	struct fastrpc_user *fl;
 	union fastrpc_remote_arg *rpra;
 	struct fastrpc_map **maps;
@@ -1239,6 +1241,40 @@ static int fastrpc_invoke_send(struct fastrpc_session_ctx *sctx,
 
 }
 
+/*
+ * A signal or the freezer ends a thread's wait for its invocation with -ERESTARTSYS, and the
+ * restarted system call repeats the same invocation. Its message is with the DSP already, and
+ * the reply comes to the first context: the thread waits on that one again instead of sending
+ * the call twice. Sent twice, the first reply is lost, which a reverse call to a DSP process's
+ * FastRPC server (adsp_listener) never recovers from. The vendor driver resumes it the same way.
+ * Another call by the same thread drops the interrupted one.
+ */
+static struct fastrpc_invoke_ctx *fastrpc_context_resume(struct fastrpc_user *fl,
+							 u32 handle, u32 sc)
+{
+	struct fastrpc_invoke_ctx *ctx, *found = NULL, *stale = NULL;
+
+	spin_lock(&fl->lock);
+	list_for_each_entry(ctx, &fl->pending, node) {
+		if (!ctx->interrupted || ctx->pid != current->pid)
+			continue;
+		ctx->interrupted = false;
+		if (ctx->msg.handle == handle && ctx->sc == sc) {
+			found = ctx;
+		} else {
+			list_del(&ctx->node);
+			stale = ctx;
+		}
+		break;
+	}
+	spin_unlock(&fl->lock);
+
+	if (stale)
+		fastrpc_context_put(stale);
+
+	return found;
+}
+
 static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 				   u32 handle, u32 sc,
 				   struct fastrpc_invoke_args *args)
@@ -1259,6 +1295,15 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 		return -EPERM;
 	}
 
+	if (!kernel) {
+		ctx = fastrpc_context_resume(fl, handle, sc);
+		if (ctx) {
+			/* The same arguments, copied again by the restarted ioctl. */
+			ctx->args = args;
+			goto wait;
+		}
+	}
+
 	ctx = fastrpc_context_alloc(fl, kernel, sc, args);
 	if (IS_ERR(ctx))
 		return PTR_ERR(ctx);
@@ -1274,6 +1319,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
 	if (err)
 		goto bail;
 
+wait:
 	if (kernel) {
 		if (!wait_for_completion_timeout(&ctx->work, 10 * HZ))
 			err = -ETIMEDOUT;
@@ -1307,6 +1353,7 @@ bail:
 
 	if (err == -ERESTARTSYS) {
 		spin_lock(&fl->lock);
+		ctx->interrupted = true;
 		list_for_each_entry_safe(buf, b, &fl->mmaps, node) {
 			list_del(&buf->node);
 			list_add_tail(&buf->node, &fl->cctx->invoke_interrupted_mmaps);
