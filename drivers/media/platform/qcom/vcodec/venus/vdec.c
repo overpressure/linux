@@ -228,6 +228,8 @@ vdec_try_fmt_common(struct venus_inst *inst, struct v4l2_format *f)
 
 		pfmt[0].sizeimage = szimage;
 		pfmt[0].bytesperline = ALIGN(stride, 128);
+		if (pixmp->pixelformat == V4L2_PIX_FMT_QC10C)
+			pfmt[0].bytesperline = ALIGN(stride * 4 / 3, 256);
 	} else {
 		pfmt[0].sizeimage = clamp_t(u32, pfmt[0].sizeimage, 0, SZ_8M);
 		pfmt[0].sizeimage = max(pfmt[0].sizeimage, szimage);
