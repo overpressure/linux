@@ -32,6 +32,7 @@
 #define ASM_STREAM_CMD_FLUSH_READBUFS		0x00010C09
 #define ASM_STREAM_CMD_SET_ENCDEC_PARAM		0x00010C10
 #define ASM_STREAM_POSTPROC_TOPO_ID_NONE	0x00010C68
+#define ASM_STREAM_POSTPROC_TOPO_ID_DEFAULT	0x00010BE4
 #define ASM_CMD_SHARED_MEM_MAP_REGIONS		0x00010D92
 #define ASM_CMDRSP_SHARED_MEM_MAP_REGIONS	0x00010D93
 #define ASM_CMD_SHARED_MEM_UNMAP_REGIONS	0x00010D94
@@ -946,7 +947,7 @@ int q6asm_open_write(struct audio_client *ac, uint32_t stream_id,
 	/* source endpoint : matrix */
 	open->sink_endpointype = ASM_END_POINT_DEVICE_MATRIX;
 	open->bits_per_sample = bits_per_sample;
-	open->postprocopo_id = ASM_NULL_POPP_TOPOLOGY;
+	open->postprocopo_id = ASM_STREAM_POSTPROC_TOPO_ID_DEFAULT;
 
 	switch (format) {
 	case SND_AUDIOCODEC_MP3:
