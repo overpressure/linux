@@ -151,7 +151,11 @@ struct camss_video_ops {
 			     enum vb2_buffer_state state);
 };
 
+struct csid_device;
+
 struct camss_video {
+	struct csid_device *sof_csid;	/* where the stream's start-of-frame stamp comes from */
+	u8 sof_rdi;
 	struct camss *camss;
 	struct vb2_queue vb2_q;
 	struct video_device vdev;

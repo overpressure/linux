@@ -136,6 +136,15 @@ struct csid_hw_ops {
 	irqreturn_t (*isr)(int irq, void *dev);
 
 	/*
+	 * sof_ticks - The hardware's stamp of a stream's last start of frame
+	 * @csid: CSID device
+	 * @rdi: RDI of the stream
+	 *
+	 * Return the system counter's value at the start of frame (optional)
+	 */
+	u64 (*sof_ticks)(struct csid_device *csid, u8 rdi);
+
+	/*
 	 * reset - Trigger reset on CSID module and wait to complete
 	 * @csid: CSID device
 	 *
