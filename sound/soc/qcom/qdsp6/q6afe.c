@@ -32,6 +32,9 @@
 #define AFE_PORT_CMDRSP_GET_PARAM_V2	0x00010106
 #define AFE_PARAM_ID_HDMI_CONFIG	0x00010210
 #define AFE_MODULE_AUDIO_DEV_INTERFACE	0x0001020C
+#define AFE_PARAM_ID_SET_TOPOLOGY	0x0001025A
+#define AFE_TOPOLOGY_VERSION		1
+#define AFE_MAX_TOPOLOGIES		8
 #define AFE_MODULE_TDM			0x0001028A
 
 #define AFE_PARAM_ID_CDC_SLIMBUS_SLAVE_CFG 0x00010235
@@ -1664,6 +1667,65 @@ EXPORT_SYMBOL_GPL(q6afe_cdc_dma_port_prepare);
  *
  * Return: Will be an negative on packet size on success.
  */
+/* The topologies ports start with, from the calibration: port id and topology, 0 for a free entry. */
+static struct {
+	u16 port_id;
+	u32 topology;
+} afe_topologies[AFE_MAX_TOPOLOGIES];
+static DEFINE_MUTEX(afe_topologies_lock);
+
+/**
+ * q6afe_set_port_topology() - the topology a port starts with from now on
+ * @port_id: AFE port id
+ * @topology: the topology, 0 for the DSP's default
+ *
+ * Return: 0, or -ENOSPC when the table is full.
+ */
+int q6afe_set_port_topology(u16 port_id, u32 topology)
+{
+	int i, free = -1;
+
+	guard(mutex)(&afe_topologies_lock);
+	for (i = 0; i < AFE_MAX_TOPOLOGIES; i++) {
+		if (afe_topologies[i].port_id == port_id) {
+			afe_topologies[i].topology = topology;
+			return 0;
+		}
+		if (free < 0 && !afe_topologies[i].topology)
+			free = i;
+	}
+	if (free < 0)
+		return -ENOSPC;
+	afe_topologies[free].port_id = port_id;
+	afe_topologies[free].topology = topology;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(q6afe_set_port_topology);
+
+static void q6afe_send_port_topology(struct q6afe_port *port)
+{
+	struct {
+		u32 version;
+		u32 topology;
+	} cfg = { .version = AFE_TOPOLOGY_VERSION };
+	int i, ret;
+
+	scoped_guard(mutex, &afe_topologies_lock) {
+		for (i = 0; i < AFE_MAX_TOPOLOGIES; i++)
+			if (afe_topologies[i].port_id == port->id)
+				cfg.topology = afe_topologies[i].topology;
+	}
+	if (!cfg.topology)
+		return;
+
+	ret = q6afe_port_set_param_v2(port, &cfg, AFE_PARAM_ID_SET_TOPOLOGY,
+				      AFE_MODULE_AUDIO_DEV_INTERFACE, sizeof(cfg));
+	if (ret)
+		dev_err(port->afe->dev, "topology 0x%x of port 0x%x not taken: %d\n",
+			cfg.topology, port->id, ret);
+}
+
 int q6afe_port_start(struct q6afe_port *port)
 {
 	struct afe_port_cmd_device_start *start;
@@ -1672,6 +1734,8 @@ int q6afe_port_start(struct q6afe_port *port)
 	int ret, param_id = port->cfg_type;
 	struct apr_pkt *pkt;
 	int pkt_size;
+
+	q6afe_send_port_topology(port);
 
 	ret  = q6afe_port_set_param_v2(port, &port->port_cfg, param_id,
 				       AFE_MODULE_AUDIO_DEV_INTERFACE,
