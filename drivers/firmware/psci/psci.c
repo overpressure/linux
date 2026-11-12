@@ -323,7 +323,9 @@ static int psci_sys_reset(struct notifier_block *nb, unsigned long action,
 		 * reset_type[30:0] = 0 (SYSTEM_WARM_RESET)
 		 * cookie = 0 (ignored by the implementation)
 		 */
-		invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), 0, 0, 0);
+		int ret = invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), 0, 0, 0);
+
+		pr_emerg("warm reset refused: %d\n", ret);
 	} else {
 		invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
 	}
@@ -334,6 +336,23 @@ static int psci_sys_reset(struct notifier_block *nb, unsigned long action,
 static struct notifier_block psci_sys_reset_nb = {
 	.notifier_call = psci_sys_reset,
 	.priority = 129,
+};
+
+/*
+ * The last resort, after the other restart handlers: a reset that was refused must not end in a
+ * halted system that only a long press of the power button brings back.
+ */
+static int psci_sys_reset_last(struct notifier_block *nb, unsigned long action,
+			       void *data)
+{
+	invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block psci_sys_reset_last_nb = {
+	.notifier_call = psci_sys_reset_last,
+	.priority = 0,
 };
 
 static void psci_sys_poweroff(void)
@@ -687,6 +706,7 @@ static void __init psci_0_2_set_functions(void)
 	};
 
 	register_restart_handler(&psci_sys_reset_nb);
+	register_restart_handler(&psci_sys_reset_last_nb);
 
 	pm_power_off = psci_sys_poweroff;
 }
