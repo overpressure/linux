@@ -394,6 +394,17 @@ static void a6xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
 
 	a6xx_set_pagetable(a6xx_gpu, ring, submit);
 
+	/* Where the CP saves this ring when it is preempted, as PICO's KGSL sets it up */
+	if (gpu->nr_rings > 1) {
+		OUT_PKT7(ring, CP_SET_PROTECTED_MODE, 1);
+		OUT_RING(ring, 0);
+
+		a6xx_emit_set_pseudo_reg(ring, a6xx_gpu, submit->queue);
+
+		OUT_PKT7(ring, CP_SET_PROTECTED_MODE, 1);
+		OUT_RING(ring, 1);
+	}
+
 	get_stats_counter(ring, REG_A6XX_RBBM_PERFCTR_CP(0),
 		rbmemptr_stats(ring, index, cpcycles_start));
 
@@ -463,7 +474,10 @@ static void a6xx_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
 
 	trace_msm_gpu_submit_flush(submit, adreno_gpu->funcs->get_timestamp(gpu), 0);
 
-	a6xx_flush(gpu, ring);
+	a6xx_flush_yield(gpu, ring);
+
+	/* Check to see if we need to start preemption */
+	a6xx_preempt_trigger(gpu);
 }
 
 void a6xx_emit_set_pseudo_reg(struct msm_ringbuffer *ring,
@@ -494,6 +508,9 @@ void a6xx_emit_set_pseudo_reg(struct msm_ringbuffer *ring,
 	/* seems OK to set to 0 to disable it */
 	OUT_RING(ring, 0);
 	OUT_RING(ring, 0);
+
+	if (a6xx_gpu->base.info->family < ADRENO_7XX_GEN1)
+		return;
 
 	/* Emit postamble to clear perfcounters */
 	preempt_postamble = a6xx_gpu->preempt_postamble_iova;
@@ -999,6 +1016,36 @@ static void a7xx_patch_pwrup_reglist(struct msm_gpu *gpu)
 	a6xx_gpu->dynamic_sel_reglist_offset = dyn_pwrup_reglist_count;
 }
 
+/*
+ * A ring switch loses what hw_init set once, among it the 64-bit addressing of each block, and the
+ * CP restores these registers from this list. It starts with the registers only a power collapse
+ * loses; list_offset says where those a preemption loses begin. Both lengths count dwords.
+ */
+static void a650_patch_pwrup_reglist(struct msm_gpu *gpu)
+{
+	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+	const struct adreno_reglist_list *ifpc = adreno_gpu->info->a6xx->ifpc_reglist;
+	const struct adreno_reglist_list *pwrup = adreno_gpu->info->a6xx->pwrup_reglist;
+	struct cpu_gpu_lock *lock = a6xx_gpu->pwrup_reglist_ptr;
+	u32 *dest = (u32 *)&lock->regs[0];
+	int i;
+
+	lock->gpu_req = lock->cpu_req = lock->turn = 0;
+	lock->list_offset = ifpc->count * 2;
+	lock->list_length = (ifpc->count + pwrup->count) * 2;
+
+	for (i = 0; i < ifpc->count; i++) {
+		*dest++ = ifpc->regs[i];
+		*dest++ = gpu_read(gpu, ifpc->regs[i]);
+	}
+
+	for (i = 0; i < pwrup->count; i++) {
+		*dest++ = pwrup->regs[i];
+		*dest++ = gpu_read(gpu, pwrup->regs[i]);
+	}
+}
+
 static int a7xx_preempt_start(struct msm_gpu *gpu)
 {
 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
@@ -1014,14 +1061,60 @@ static int a7xx_preempt_start(struct msm_gpu *gpu)
 
 	a6xx_emit_set_pseudo_reg(ring, a6xx_gpu, NULL);
 
+	if (adreno_gpu->info->family < ADRENO_7XX_GEN1) {
+		OUT_PKT7(ring, CP_SET_PROTECTED_MODE, 1);
+		OUT_RING(ring, 1);
+	}
+
 	a6xx_flush_yield(gpu, ring);
 
 	return a6xx_idle(gpu, ring) ? 0 : -EINVAL;
 }
 
+static int a650_preempt_cp_init(struct msm_gpu *gpu)
+{
+	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
+	struct msm_ringbuffer *ring = gpu->rb[0];
+
+	OUT_PKT7(ring, CP_ME_INIT, 11);
+
+	/* Also the operation mode and the register list with its spinlock */
+	OUT_RING(ring, 0x0000016f);
+
+	/* Enable multiple hardware contexts */
+	OUT_RING(ring, 0x00000003);
+
+	/* Enable error detection */
+	OUT_RING(ring, 0x20000000);
+
+	/* Don't enable header dump */
+	OUT_RING(ring, 0x00000000);
+	OUT_RING(ring, 0x00000000);
+
+	/* No workarounds enabled */
+	OUT_RING(ring, 0x00000000);
+
+	/* Operation mode mask */
+	OUT_RING(ring, 0x00000002);
+
+	OUT_RING(ring, lower_32_bits(a6xx_gpu->pwrup_reglist_iova));
+	OUT_RING(ring, upper_32_bits(a6xx_gpu->pwrup_reglist_iova));
+	OUT_RING(ring, 0x00000000);
+	OUT_RING(ring, 0x00000000);
+
+	a6xx_flush(gpu, ring);
+	return a6xx_idle(gpu, ring) ? 0 : -EINVAL;
+}
+
 static int a6xx_cp_init(struct msm_gpu *gpu)
 {
+	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+	struct a6xx_gpu *a6xx_gpu = to_a6xx_gpu(adreno_gpu);
 	struct msm_ringbuffer *ring = gpu->rb[0];
+
+	if (a6xx_gpu->pwrup_reglist_emitted)
+		return a650_preempt_cp_init(gpu);
 
 	OUT_PKT7(ring, CP_ME_INIT, 8);
 
@@ -1629,7 +1722,8 @@ static int hw_init(struct msm_gpu *gpu)
 
 	/* Enable interrupts */
 	gpu_write(gpu, REG_A6XX_RBBM_INT_0_MASK,
-		  adreno_is_a7xx(adreno_gpu) ? A7XX_INT_MASK : A6XX_INT_MASK);
+		  adreno_is_a7xx(adreno_gpu) ? A7XX_INT_MASK :
+		  A6XX_INT_MASK | (gpu->nr_rings > 1 ? A6XX_RBBM_INT_0_MASK_CP_SW : 0));
 
 	ret = adreno_hw_init(gpu);
 	if (ret)
@@ -1703,6 +1797,12 @@ static int hw_init(struct msm_gpu *gpu)
 
 	if (adreno_is_a7xx(adreno_gpu) && !a6xx_gpu->pwrup_reglist_emitted) {
 		a7xx_patch_pwrup_reglist(gpu);
+		a6xx_gpu->pwrup_reglist_emitted = true;
+	}
+
+	if (!adreno_is_a7xx(adreno_gpu) && gpu->nr_rings > 1 &&
+	    adreno_gpu->info->a6xx->pwrup_reglist && !a6xx_gpu->pwrup_reglist_emitted) {
+		a650_patch_pwrup_reglist(gpu);
 		a6xx_gpu->pwrup_reglist_emitted = true;
 	}
 
