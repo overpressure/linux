@@ -966,7 +966,6 @@ static u32 get_framesize_raw_nv12_ubwc(u32 width, u32 height)
 	u32 y_stride, y_plane;
 	u32 uv_meta_stride, uv_meta_plane;
 	u32 uv_stride, uv_plane;
-	u32 extradata = SZ_16K;
 
 	y_meta_stride = ALIGN(DIV_ROUND_UP(width, 32), 64);
 	y_meta_plane = y_meta_stride * ALIGN(DIV_ROUND_UP(height, 8), 16);
@@ -982,8 +981,7 @@ static u32 get_framesize_raw_nv12_ubwc(u32 width, u32 height)
 	uv_stride = ALIGN(width, 128);
 	uv_plane = ALIGN(uv_stride * ALIGN(height / 2, 32), SZ_4K);
 
-	return ALIGN(y_meta_plane + y_plane + uv_meta_plane + uv_plane +
-		     max(extradata, y_stride * 48), SZ_4K);
+	return ALIGN(y_meta_plane + y_plane + uv_meta_plane + uv_plane, SZ_4K);
 }
 
 static u32 get_framesize_raw_p010(u32 width, u32 height)
@@ -1035,7 +1033,6 @@ static u32 get_framesize_raw_yuv420_tp10_ubwc(u32 width, u32 height)
 	u32 y_meta_stride, y_meta_scanlines;
 	u32 uv_meta_stride, uv_meta_scanlines;
 	u32 y_meta_plane, uv_meta_plane;
-	u32 extradata = SZ_16K;
 	u32 size;
 
 	y_stride = ALIGN(width * 4 / 3, 256);
@@ -1053,7 +1050,6 @@ static u32 get_framesize_raw_yuv420_tp10_ubwc(u32 width, u32 height)
 	uv_meta_plane = ALIGN(uv_meta_stride * uv_meta_scanlines, SZ_4K);
 
 	size = y_ubwc_plane + uv_ubwc_plane + y_meta_plane + uv_meta_plane;
-	size += max(extradata + SZ_8K, y_stride * 48);
 
 	return ALIGN(size, SZ_4K);
 }
