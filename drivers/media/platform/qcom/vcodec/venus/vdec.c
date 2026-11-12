@@ -893,6 +893,8 @@ deinit:
 	return ret;
 }
 
+#define VDEC_CAPTURE_BUFS_ENOUGH	16U
+
 static int vdec_num_buffers(struct venus_inst *inst, unsigned int *in_num,
 			    unsigned int *out_num)
 {
@@ -992,8 +994,13 @@ static int vdec_queue_setup(struct vb2_queue *q,
 						    inst->width,
 						    inst->height);
 		inst->output_buf_size = sizes[0];
-		*num_buffers = max(*num_buffers, out_num);
-		inst->num_output_bufs = *num_buffers;
+		inst->num_output_bufs = max(*num_buffers, out_num);
+		/*
+		 * The firmware asks for more than a client may have images for: Steam Link's has 16 and
+		 * asks for 16, where the firmware's minimum for its stream is 18. It decodes with fewer
+		 * queued, so a client's 16 stand.
+		 */
+		*num_buffers = max(*num_buffers, min(out_num, VDEC_CAPTURE_BUFS_ENOUGH));
 
 		mutex_lock(&inst->lock);
 		if (inst->codec_state == VENUS_DEC_STATE_CAPTURE_SETUP)
