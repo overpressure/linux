@@ -765,6 +765,7 @@ static int _dpu_kms_initialize_writeback(struct drm_device *dev,
 	const u32 *wb_formats;
 	int n_formats;
 	u32 maxlinewidth;
+	bool bonded;
 	int i, rc = 0;
 
 	/*
@@ -782,17 +783,19 @@ static int _dpu_kms_initialize_writeback(struct drm_device *dev,
 
 		memset(&info, 0, sizeof(info));
 		info.intf_type = INTF_WB;
+		/* A bonded pair needs a second WB block, which not every SoC has (SM8250: one). */
+		bonded = msm_dsi_is_bonded_dsi(priv->kms->dsi[i]) && i + 1 < dpu_kms->catalog->wb_count;
 
 		/* WB_2 is default one due to legacy support per Jessica. */
 		info.h_tile_instance[info.num_of_h_tiles++] = dpu_kms->catalog->wb[i].id;
 		/* TODO: to decouple with DSI for dual WB case. */
-		if (msm_dsi_is_bonded_dsi(priv->kms->dsi[i]))
+		if (bonded)
 			info.h_tile_instance[info.num_of_h_tiles++] = dpu_kms->catalog->wb[i + 1].id;
 
 		info.is_cmd_mode = false;
 
-		maxlinewidth = dpu_rm_get_wb(&dpu_kms->rm, info.h_tile_instance[i])->caps->maxlinewidth;
-		if (msm_dsi_is_bonded_dsi(priv->kms->dsi[i]))
+		maxlinewidth = dpu_rm_get_wb(&dpu_kms->rm, info.h_tile_instance[0])->caps->maxlinewidth;
+		if (bonded)
 			maxlinewidth = 2 * maxlinewidth;
 
 		encoder = dpu_encoder_init(dev, DRM_MODE_ENCODER_VIRTUAL, &info);
