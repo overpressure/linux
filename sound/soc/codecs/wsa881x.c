@@ -714,6 +714,10 @@ static void wsa881x_init(struct wsa881x_priv *wsa881x)
 	if (val)
 		regmap_update_bits(rm, WSA881X_BOOST_PRESET_OUT1, 0xF0, 0x70);
 
+	/* The boost as the stock kernel runs it. */
+	regmap_write(rm, WSA881X_BOOST_PRESET_OUT1, 0x07);
+	regmap_update_bits(rm, WSA881X_BOOST_ZX_CTL, 0x20, 0x00);
+
 	regmap_update_bits(rm, WSA881X_BOOST_PRESET_OUT2, 0xF0, 0x30);
 	regmap_update_bits(rm, WSA881X_SPKR_DRV_EN, 0x08, 0x08);
 	regmap_update_bits(rm, WSA881X_BOOST_CURRENT_LIMIT, 0x0F, 0x08);
@@ -919,12 +923,16 @@ static int wsa881x_spkr_pa_event(struct snd_soc_dapm_widget *w,
 	case SND_SOC_DAPM_PRE_PMU:
 		snd_soc_component_update_bits(comp, WSA881X_SPKR_OCP_CTL,
 					      WSA881X_SPKR_OCP_MASK,
-					      WSA881X_SPKR_OCP_EN);
+					      WSA881X_SPKR_OCP_EN |
+					      WSA881X_SPKR_OCP_HOLD);
 		regmap_multi_reg_write(wsa881x->regmap, wsa881x_pre_pmu_pa_2_0,
 				       ARRAY_SIZE(wsa881x_pre_pmu_pa_2_0));
 
+		/* With the compander, the macro sets the amplifier's gain over its port. */
 		snd_soc_component_update_bits(comp, WSA881X_SPKR_DRV_GAIN,
 					      WSA881X_PA_GAIN_SEL_MASK,
+					      wsa881x->port_enable[WSA881X_PORT_COMP] ?
+					      WSA881X_PA_GAIN_SEL_DRE :
 					      WSA881X_PA_GAIN_SEL_REG);
 		break;
 	case SND_SOC_DAPM_POST_PMU:
