@@ -116,6 +116,7 @@ struct csiphy_device {
 	const struct csiphy_subdev_resources *res;
 	struct csiphy_device_regs *regs;
 	bool combo_mode;
+	struct v4l2_subdev *combo_subdev;	/* the sensor on the second pads */
 	int lanes_enable_count;
 };
 
