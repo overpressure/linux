@@ -165,7 +165,11 @@ static irqreturn_t q6v5_handover_interrupt(int irq, void *data)
 	struct qcom_q6v5 *q6v5 = data;
 
 	if (q6v5->handover_issued) {
-		dev_err(q6v5->dev, "Handover signaled, but it already happened\n");
+		/*
+		 * The PICO 4's SLPI raises its handover (proxy unvote) bit again about five
+		 * times a second while it runs; like the vendor kernel, take only the first.
+		 */
+		dev_dbg(q6v5->dev, "Handover signaled, but it already happened\n");
 		return IRQ_HANDLED;
 	}
 
