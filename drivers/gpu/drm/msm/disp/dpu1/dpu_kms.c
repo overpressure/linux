@@ -486,6 +486,11 @@ static void dpu_kms_disable_commit(struct msm_kms *kms)
 static bool dpu_kms_seamless_timing_update(struct msm_kms *kms,
 					   struct drm_display_mode *mode)
 {
+	/*
+	 * The seamless path does not change the timing here: a full mode set instead.
+	 */
+	if (to_dpu_kms(kms)->catalog->mdss_ver->core_major_ver < 10)
+		return false;
 	mode = dpu_encoder_find_connector_mode(mode);
 	if (!mode)
 		return false;
