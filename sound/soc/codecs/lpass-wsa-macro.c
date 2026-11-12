@@ -1907,6 +1907,9 @@ static int wsa_macro_enable_interpolator(struct snd_soc_dapm_widget *w,
 					CDC_WSA_RX1_RX_PATH_MIX_SEC0,
 					CDC_WSA_RX_PGA_HALF_DB_MASK,
 					CDC_WSA_RX_PGA_HALF_DB_ENABLE);
+			/* The half dB up and this 2 dB down are the offset of -1.5 dB. */
+			snd_soc_component_write(component, gain_reg,
+				(snd_soc_component_read(component, gain_reg) - 2) & 0xff);
 		}
 		wsa_macro_config_ear_spkr_gain(component, wsa,
 						event, gain_reg);
@@ -1934,6 +1937,8 @@ static int wsa_macro_enable_interpolator(struct snd_soc_dapm_widget *w,
 					CDC_WSA_RX1_RX_PATH_MIX_SEC0,
 					CDC_WSA_RX_PGA_HALF_DB_MASK,
 					CDC_WSA_RX_PGA_HALF_DB_DISABLE);
+			snd_soc_component_write(component, gain_reg,
+				(snd_soc_component_read(component, gain_reg) + 2) & 0xff);
 		}
 		wsa_macro_config_ear_spkr_gain(component, wsa,
 						event, gain_reg);
@@ -2519,7 +2524,7 @@ static int wsa_macro_component_probe(struct snd_soc_component *comp)
 	const struct snd_soc_dapm_widget *widgets;
 	const struct snd_soc_dapm_route *routes;
 	unsigned int num_widgets, num_routes;
-	int ret;
+	int ret, i;
 
 	snd_soc_component_init_regmap(comp, wsa->regmap);
 
@@ -2535,6 +2540,18 @@ static int wsa_macro_component_probe(struct snd_soc_component *comp)
 				CDC_WSA_RX_PATH_SPKR_RATE_FS_2P4_3P072);
 
 	wsa_macro_set_spkr_mode(comp, WSA_MACRO_SPKR_MODE_1);
+
+	/* The speaker paths as the stock kernel sets them up. */
+	snd_soc_component_update_bits(comp, CDC_WSA_TOP_TOP_CFG1, 0x03, 0x03);
+	for (i = 0; i < 2; i++) {
+		snd_soc_component_update_bits(comp, CDC_WSA_BOOST0_BOOST_CFG1 + i * 0x40, 0x3f, 0x12);
+		snd_soc_component_update_bits(comp, CDC_WSA_BOOST0_BOOST_CFG2 + i * 0x40, 0x1c, 0x08);
+		snd_soc_component_update_bits(comp, CDC_WSA_COMPANDER0_CTL7 + i * 0x40, 0x1e, 0x18);
+		snd_soc_component_update_bits(comp, CDC_WSA_RX0_RX_PATH_CFG0 +
+					      i * WSA_MACRO_RX_PATH_OFFSET, 0x01, 0x01);
+		snd_soc_component_update_bits(comp, CDC_WSA_RX0_RX_PATH_MIX_CFG +
+					      i * WSA_MACRO_RX_PATH_OFFSET, 0x01, 0x01);
+	}
 
 	switch (wsa->codec_version) {
 	case LPASS_CODEC_VERSION_1_0:
