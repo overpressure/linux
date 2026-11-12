@@ -1278,6 +1278,32 @@ static void *__init copy_device_tree(void *fdt)
  * pointers of the nodes so the normal device-tree walking functions
  * can be used.
  */
+/*
+ * The PICO 4's bootloader lays a downstream board overlay over the tree, which replaces the
+ * root's compatible and model ("qcom,kona-mtp" ...): the tree keeps its own under
+ * pico4,compatible and pico4,model, which the overlay does not know, and they come back here,
+ * before anything matches on the machine.
+ */
+static void __init restore_root_identity(void)
+{
+	static const char * const names[][2] = {
+		{ "pico4,compatible", "compatible" },
+		{ "pico4,model", "model" },
+	};
+	struct property *saved, *prop;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(names); i++) {
+		saved = of_find_property(of_root, names[i][0], NULL);
+		prop = of_find_property(of_root, names[i][1], NULL);
+		if (!saved || !prop)
+			continue;
+		prop->value = saved->value;
+		prop->length = saved->length;
+		pr_info("restored the root %s: %s\n", names[i][1], (const char *)saved->value);
+	}
+}
+
 void __init unflatten_device_tree(void)
 {
 	void *fdt = initial_boot_params;
@@ -1300,6 +1326,8 @@ void __init unflatten_device_tree(void)
 
 	__unflatten_device_tree(fdt, NULL, &of_root,
 				early_init_dt_alloc_memory_arch, false);
+	if (of_root)
+		restore_root_identity();
 
 	/* Get pointer to "/chosen" and "/aliases" nodes for use everywhere */
 	of_alias_scan(early_init_dt_alloc_memory_arch);
