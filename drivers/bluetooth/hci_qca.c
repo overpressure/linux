@@ -2399,12 +2399,6 @@ static int qca_serdev_probe(struct serdev_device *serdev)
 	bool power_ctrl_enabled = true;
 	const struct firmware *fw;
 
-	/* HACK: make sure firmware is available before trying to probe */
-	err = firmware_request_nowarn(&fw, "qca/hmtbtfw20.tlv", &serdev->dev);
-	if (err)
-		return -EPROBE_DEFER;
-	release_firmware(fw);
-
 	qcadev = devm_kzalloc(&serdev->dev, sizeof(*qcadev), GFP_KERNEL);
 	if (!qcadev)
 		return -ENOMEM;
@@ -2426,6 +2420,17 @@ static int qca_serdev_probe(struct serdev_device *serdev)
 		qcadev->btsoc_type = data->soc_type;
 	else
 		qcadev->btsoc_type = QCA_ROME;
+
+	/*
+	 * HACK: make sure firmware is available before trying to probe. The name is the
+	 * WCN7850's; other controllers load their own when the device is opened.
+	 */
+	if (qcadev->btsoc_type == QCA_WCN7850) {
+		err = firmware_request_nowarn(&fw, "qca/hmtbtfw20.tlv", &serdev->dev);
+		if (err)
+			return -EPROBE_DEFER;
+		release_firmware(fw);
+	}
 
 	switch (qcadev->btsoc_type) {
 	case QCA_QCA6390:
