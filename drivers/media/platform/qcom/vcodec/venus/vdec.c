@@ -1188,6 +1188,8 @@ static int vdec_start_output(struct venus_inst *inst)
 
 done:
 	inst->streamon_out = 1;
+	inst->dec_wait_parameter_sets = !inst->streamon_cap &&
+					!v4l2_m2m_num_src_bufs_ready(inst->m2m_ctx);
 	return ret;
 }
 
@@ -1380,6 +1382,43 @@ static void vdec_buf_cleanup(struct vb2_buffer *vb)
 		vdec_session_release(inst);
 }
 
+/*
+ * The firmware starts on a stream's headers. With other data first it holds every buffer, never
+ * reports the stream, also with a key frame after it, and answers no flush, so that each stop takes
+ * hfi's full second. Steam Link's client restarts the decoder in the middle of a stream and meets
+ * the key frame it asked for only later; its stuck check then restarts it again, until a key frame
+ * happens to come first. A stateful decoder skips what comes before the headers: such a buffer goes
+ * straight back to the client.
+ */
+#define VDEC_HEADERS_WITHIN	512U
+
+static bool vdec_has_parameter_sets(struct venus_inst *inst, struct vb2_buffer *vb)
+{
+	u32 pixfmt = inst->fmt_out->pixfmt;
+	unsigned long start = vb->planes[0].data_offset;
+	unsigned long end = min(vb2_get_plane_payload(vb, 0), start + VDEC_HEADERS_WITHIN);
+	const u8 *p = vb2_plane_vaddr(vb, 0);
+	unsigned long i;
+
+	if (!p || (pixfmt != V4L2_PIX_FMT_HEVC && pixfmt != V4L2_PIX_FMT_H264))
+		return true;
+
+	for (i = start; i + 3 < end; i++) {
+		if (p[i] || p[i + 1] || p[i + 2] != 1)
+			continue;
+		if (pixfmt == V4L2_PIX_FMT_HEVC) {
+			u8 type = (p[i + 3] >> 1) & 0x3f;
+
+			if (type == 32 || type == 33)	/* VPS, SPS */
+				return true;
+		} else if ((p[i + 3] & 0x1f) == 7) {	/* SPS */
+			return true;
+		}
+		i += 3;
+	}
+	return false;
+}
+
 static void vdec_vb2_buf_queue(struct vb2_buffer *vb)
 {
 	struct venus_inst *inst = vb2_get_drv_priv(vb->vb2_queue);
@@ -1401,6 +1440,17 @@ static void vdec_vb2_buf_queue(struct vb2_buffer *vb)
 		inst->next_buf_last = false;
 		mutex_unlock(&inst->lock);
 		return;
+	}
+
+	if (inst->dec_wait_parameter_sets && V4L2_TYPE_IS_OUTPUT(vb->vb2_queue->type) &&
+	    vb2_start_streaming_called(vb->vb2_queue)) {
+		if (!vdec_has_parameter_sets(inst, vb)) {
+			vbuf->sequence = inst->sequence_out++;
+			v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_DONE);
+			mutex_unlock(&inst->lock);
+			return;
+		}
+		inst->dec_wait_parameter_sets = false;
 	}
 
 	venus_helper_vb2_buf_queue(vb);
