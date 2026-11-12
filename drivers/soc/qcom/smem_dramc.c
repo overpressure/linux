@@ -189,6 +189,12 @@ static void smem_dram_parse_v3_data(struct smem_dram *dram, void *data, bool add
 	/* This may be 13 or 14 */
 	int num_freq_entries = MAX_DDR_FREQ_NUM_V3;
 	struct ddr_details_v3 *details = data;
+	/*
+	 * The table is declared with 13 entries and the 14-entry layout has one more in place.
+	 * Index it from the raw data, not the array: the 14th index is past the declared array,
+	 * and GCC turns a loop with that undefined access into one that never ends.
+	 */
+	struct ddr_freq_table *freqs = data + offsetof(struct ddr_details_v3, ddr_freq_tbl.ddr_freq);
 
 	dram->manufacturer_id = details->manufacturer_id;
 	dram->device_type = details->device_type;
@@ -199,7 +205,7 @@ static void smem_dram_parse_v3_data(struct smem_dram *dram, void *data, bool add
 		num_freq_entries++;
 
 	for (int i = 0; i < num_freq_entries; i++) {
-		struct ddr_freq_table *freq_entry = &details->ddr_freq_tbl.ddr_freq[i];
+		struct ddr_freq_table *freq_entry = &freqs[i];
 
 		if (freq_entry->freq_khz && freq_entry->enabled)
 			dram->frequencies[dram->num_frequencies++] = 1000 * freq_entry->freq_khz;
