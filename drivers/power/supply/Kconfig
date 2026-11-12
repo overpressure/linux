@@ -1170,6 +1170,14 @@ config BATTERY_CHARGER_SURFACE_RT
 	  This driver can also be built as a module. If so, the module
 	  will be called surface-rt-ec.
 
+config BATTERY_PICO4_PM8150B
+	tristate "PICO 4 battery level and charger state from PM8150B"
+	depends on MFD_SPMI_PMIC || COMPILE_TEST
+	help
+	  Say Y here to report the PICO 4's battery: the PM8150B fuel gauge's
+	  state of charge, the charger's state and the USB input, read from the
+	  PMIC's registers as the stock kernel reads them.
+
 config CHARGER_QCOM_SMB2
 	tristate "Qualcomm PMI8998 PMIC charger driver"
 	depends on MFD_SPMI_PMIC
