@@ -10,6 +10,9 @@ struct q6core_svc_api_info {
 };
 
 bool q6core_is_adsp_ready(void);
+int q6core_map_memory(u64 addr, u32 size, u32 *handle);
+int q6core_unmap_memory(u32 handle);
+int q6core_register_topologies(u64 addr, u32 handle, u32 size);
 int q6core_get_svc_api_info(int svc_id, struct q6core_svc_api_info *ainfo);
 
 #endif /* __Q6CORE_H__ */
