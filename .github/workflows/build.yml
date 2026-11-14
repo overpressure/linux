@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Every headset's branch, pull request and tag of this tree, built with overpressure's tooling (its
-# build container and the headset's build-tree.sh), after the headset's own tests. Each content is built
-# once: the key hashes this tree, the headset's kernel/ folder in overpressure and the build image's pin,
+# build container) and the headset's build-tree.sh (its repository overpressure/<headset>, dropped into
+# overpressure's devices/), after the headset's own tests. Each content is built once: the key hashes
+# this tree, the headset's kernel/ folder and the build image's pin,
 # and a key built before (by a pull request of this repository, never a fork's) is not built again when
 # the merge lands. A tag (<headset>/<version>-<n>) is released only when two builds on two machines give
 # the same files: the earlier build of its content, or a second one now, and one more of its own. The
@@ -42,10 +43,13 @@ jobs:
           path: overpressure
       - name: The headset
         id: headset
+        env:
+          GIT_TERMINAL_PROMPT: "0" # a layer has no repository of that name: no question, a failure
         run: |
           ref=${GITHUB_BASE_REF:-$GITHUB_REF_NAME} # a pull request: the branch it goes into
           device=${ref%%/*}
-          if [ -f "overpressure/devices/$device/kernel/build-tree.sh" ]; then
+          if git clone -q --depth 1 "https://github.com/overpressure/$device.git" "overpressure/devices/$device" &&
+            [ -f "overpressure/devices/$device/kernel/build-tree.sh" ]; then
             echo "device=$device" >> "$GITHUB_OUTPUT"
           else
             echo "$device is a layer without a headset: nothing to build"
@@ -63,7 +67,7 @@ jobs:
           DEVICE: ${{ steps.headset.outputs.device }}
         run: |
           tree=$(git -C overpressure/out/linux rev-parse 'HEAD^{tree}')
-          recipe=$(git -C overpressure rev-parse "HEAD:devices/$DEVICE/kernel")
+          recipe=$(git -C "overpressure/devices/$DEVICE" rev-parse HEAD:kernel)
           image=$(git -C overpressure rev-parse HEAD:overpressure/linux.py)
           key=$(echo "$tree $recipe $image" | sha256sum | cut -c1-32)
           echo "name=build-$DEVICE-$key" >> "$GITHUB_OUTPUT"
