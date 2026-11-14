@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-only
 # Every headset's branch, pull request and tag of this tree, built with overpressure's tooling (its
-# build container and the headset's build-tree.sh), after the headset's own tests. A branch or a pull
-# request into it is built once: does it build. A tag (<headset>/<version>-<n>) is built twice, by two
-# jobs on two machines, and released only when both give the same files. The layers without a headset
-# (valve/, common/, sm8250/) have nothing to build: their check passes at once.
+# build container and the headset's build-tree.sh), after the headset's own tests. Each content is built
+# once: the key hashes this tree, the headset's kernel/ folder in overpressure and the build image's pin,
+# and a key built before (by a pull request of this repository, never a fork's) is not built again when
+# the merge lands. A tag (<headset>/<version>-<n>) is released only when two builds on two machines give
+# the same files: the earlier build of its content, or a second one now, and one more of its own. The
+# layers without a headset (valve/, common/, sm8250/) have nothing to build: their check passes at once.
 name: Build
 
 on:
   push:
-    branches: ["*/*"]
+    branches: ["*/[0-9]*"] # the layers; other branches build as pull requests
     tags: ["*/*-*"]
   pull_request:
   workflow_dispatch:
@@ -24,6 +26,9 @@ jobs:
   kernel:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read # an earlier build of the same content
     strategy:
       matrix:
         build: ${{ fromJSON(startsWith(github.ref, 'refs/tags/') && '["a", "b"]' || '["a"]') }}
@@ -51,29 +56,62 @@ jobs:
         with:
           path: overpressure/out/linux
           fetch-depth: 1
-      - name: The headset's own tests
+      - name: The content's key
+        id: key
         if: steps.headset.outputs.device
+        env:
+          DEVICE: ${{ steps.headset.outputs.device }}
+        run: |
+          tree=$(git -C overpressure/out/linux rev-parse 'HEAD^{tree}')
+          recipe=$(git -C overpressure rev-parse "HEAD:devices/$DEVICE/kernel")
+          image=$(git -C overpressure rev-parse HEAD:overpressure/linux.py)
+          key=$(echo "$tree $recipe $image" | sha256sum | cut -c1-32)
+          echo "name=build-$DEVICE-$key" >> "$GITHUB_OUTPUT"
+      - name: An earlier build of the same content
+        id: earlier
+        if: steps.headset.outputs.device && matrix.build == 'a'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.key.outputs.name }}
+          OURS: "[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == ${{ github.repository_id }})][0].id // empty"
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=30" --jq "$OURS")
+          if [ -n "$id" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > earlier.zip
+            mkdir -p overpressure/out/kernel && unzip -q earlier.zip -d overpressure/out/kernel && rm earlier.zip
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "$NAME: built before (artifact $id)"
+          fi
+      - name: The headset's own tests
+        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
         run: |
           tests=overpressure/out/linux/tools/testing/overpressure/${{ steps.headset.outputs.device }}/run.sh
           if [ -f "$tests" ]; then bash "$tests"; else echo "no tests of its own"; fi
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
-        if: steps.headset.outputs.device
+        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
         with:
           version: "0.9.26"
       - name: The build container
-        if: steps.headset.outputs.device
+        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
         working-directory: overpressure
         run: |
           uv sync --locked
           uv run python -m overpressure container build
       - name: The kernel
-        if: steps.headset.outputs.device
+        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
         working-directory: overpressure
         run: |
           uv run python -m overpressure container run -- \
             bash "devices/${{ steps.headset.outputs.device }}/kernel/build-tree.sh" \
             out/linux /var/tmp/kernel out/kernel
           cat out/kernel/build.json
+      - name: Kept for the next run
+        if: steps.headset.outputs.device && matrix.build == 'a' && steps.earlier.outputs.found != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.key.outputs.name }}
+          path: overpressure/out/kernel
+          if-no-files-found: error
       - name: Its files
         if: steps.headset.outputs.device && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
