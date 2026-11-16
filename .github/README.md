@@ -49,8 +49,9 @@ To release a headset's kernel:
    successful push build is built once in the tag's run. The release holds `Image.gz`, the device tree, `config`,
    `version`, `build.json` (the commit, the kernel's banner, the tooling's commits, the build image) and
    `SHA256SUMS`. The kernel's configuration (Valve's) signs modules with a key each build generates, so two builds
-   of a commit never give the same `Image.gz`: a release is one build, and a rebuild of it differs in that key. The notes name the tooling's commits, the change list since the headset's previous tag
-   and Valve's commit. No release is marked the latest: several headsets share this repository.
+   of a commit never give the same `Image.gz`: a release is one build, and a rebuild of it differs in that key.
+   The notes name the tooling's commits, the change list since the headset's previous tag and Valve's commit. The
+   newest release, of whichever headset, is marked the latest.
 3. The headset's repository pins the tag, its commit and the files' hashes (phoenix's
    [kernel/release.json](https://github.com/overpressure/phoenix/blob/main/kernel/release.json)) and checks the
    files against them.

@@ -418,8 +418,8 @@ jobs:
             echo '```'
           } > ../notes.md
           cat ../notes.md
-          # Several headsets share this repository: no release is the latest of all.
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+          # GitHub marks one release of the repository the latest: the newest, of whichever headset.
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
             --title "$TAG" --notes-file ../notes.md -- *
 
   ci:
