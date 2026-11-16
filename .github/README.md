@@ -3,8 +3,8 @@
 **TL;DR:** Valve's Steam Frame kernel (`linux-valve` 7.2) with the
 [overpressure](https://github.com/overpressure/overpressure) project's changes for other standalone VR headsets, one
 branch per layer. Changes move up the layers by merge pull requests, never by rebase. A headset's release is an
-annotated tag `<headset>/7.2-N`, built twice by CI and released only when both builds agree; the headset's repository
-pins that tag by commit and file hashes.
+annotated tag `<headset>/7.2-N`, released with the kernel CI built for its commit; the headset's repository pins that
+tag by commit and file hashes.
 
 ## Branches
 
@@ -44,10 +44,12 @@ follow up the layers, each once its `ci` passes.
 To release a headset's kernel:
 
 1. An annotated tag on the headset's branch, its message the title and what changed:
-   `git tag -a phoenix/7.2-2 origin/phoenix/7.2`, then push it.
-2. CI builds the tag twice on two machines and releases it only when both give the same files: `Image.gz`, the
-   device tree, `config`, `version`, `build.json` (the commit, the kernel's banner, the tooling's commits, the build
-   image) and `SHA256SUMS`. The notes name the tooling's commits, the change list since the headset's previous tag
+   `git tag -a phoenix/7.2-N origin/phoenix/7.2`, then push it.
+2. CI releases the kernel the push build of the tag's commit made, without building again; a commit without a
+   successful push build is built once in the tag's run. The release holds `Image.gz`, the device tree, `config`,
+   `version`, `build.json` (the commit, the kernel's banner, the tooling's commits, the build image) and
+   `SHA256SUMS`. The kernel's configuration (Valve's) signs modules with a key each build generates, so two builds
+   of a commit never give the same `Image.gz`: a release is one build, and a rebuild of it differs in that key. The notes name the tooling's commits, the change list since the headset's previous tag
    and Valve's commit. No release is marked the latest: several headsets share this repository.
 3. The headset's repository pins the tag, its commit and the files' hashes (phoenix's
    [kernel/release.json](https://github.com/overpressure/phoenix/blob/main/kernel/release.json)) and checks the
@@ -68,10 +70,9 @@ as its head.
 
 Each content is built once. A check of a change is keyed by the kernel's sources (the tree without `.github/`, so a
 change to the CI alone builds nothing new), so the layers' pull requests find the build of the pull request that
-brought the change and take seconds; a tag builds again, twice and keyed by its commit, which `uname -v` and the
-release name. One change costs one build in its pull request, one through a warm ccache on the push after its merge,
-and two in its headset's tag. A check build compiles through ccache, whose objects the cache of its
+brought the change and take seconds; a tag takes the push build of its commit. One change costs one build in its
+pull request and one through a warm ccache on the push after its merge; its headset's tag costs none. A check build compiles through ccache, whose objects the cache of its
 branch, its base or the default branch carries over, so it recompiles only what the change touches. GitHub keeps a
 run's cache for its own branch, and only the default branch's reaches every pull request: so a push to a headset's
-branch compiles through ccache instead of taking the pull request's build, and keeps that cache current; a tag's two
-builds start clean (a change to the kernel's configuration touches every file, so it compiles everything anyway).
+branch compiles through ccache instead of taking the pull request's build, and keeps that cache current. A change to
+the kernel's configuration, even to its order, touches every file, so it compiles everything anyway.
