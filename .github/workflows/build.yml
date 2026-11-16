@@ -10,8 +10,8 @@
 #   no workflow), is built by a run the Layers workflow starts on the pull request's base branch with
 #   `head` (the branch that moves up, valve/7.2 among them, whose tree has no workflows): every headset's
 #   branch on that base is built with `head` merged in, and the run sets the status `ci` on `head`'s commit;
-# - a push to a headset's branch builds it; a tag (<headset>/<version>-<n>) builds twice on two machines
-#   and is released only when both give the same files.
+# - a push to a headset's branch builds it; a tag (<headset>/<version>-<n>) is released with the kernel the
+#   push build of its commit made, and builds only when that commit has no successful push build.
 #
 # The required check is `ci`: the gate job, which passes only when every job before it did, or the status
 # a run with `head` sets. Checks belong to a commit, and a layer's pull request has the layer's own head
@@ -27,8 +27,9 @@
 # built before (by this repository, never a fork) is downloaded instead of built again. A push to a headset's
 # branch compiles anyway, through ccache: GitHub keeps a run's cache for its own branch, and only the default
 # branch's is read by every pull request, so the push after a merge is what keeps that cache current. A
-# tag's two builds are keyed by the commit instead (uname -v names it, and a release names its tag's commit)
-# and start clean.
+# tag's own build, where it needs one, is keyed by the commit instead (uname -v names it) and starts clean.
+# The kernel's configuration signs modules with a key each build generates, so no two builds of a commit
+# give the same Image: a release is one build, not checked against a second.
 name: Build
 
 on:
@@ -58,12 +59,14 @@ jobs:
     permissions:
       contents: read
       statuses: write # the pending ci on a layer pull request's head
+      actions: read # a tag's push build
     outputs:
       headsets: ${{ steps.plan.outputs.headsets }}
       builds: ${{ steps.plan.outputs.builds }}
       device: ${{ steps.plan.outputs.device }}
       tooling: ${{ steps.plan.outputs.tooling }}
       tested: ${{ steps.plan.outputs.tested }}
+      pushed: ${{ steps.plan.outputs.pushed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,11 +97,18 @@ jobs:
             ;;
           esac
           builds='["a"]'
-          [ "$GITHUB_REF_TYPE" != tag ] || builds='["a", "b"]'
+          # A tag's kernel is its commit's push build, the newest that passed on the headset's branch.
+          pushed=""
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            pushed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?event=push&status=success&head_sha=$GITHUB_SHA" \
+              --jq '[.workflow_runs[] | select(.head_branch | test("^[^/]+/[0-9.]+$"))][0].id // empty')
+            echo "the push build of ${GITHUB_SHA:0:12}: ${pushed:-none, so this tag builds}"
+          fi
           tooling=$(gh api repos/overpressure/overpressure/commits/main --jq .sha)
           {
             echo "headsets=$headsets"
             echo "builds=$builds"
+            echo "pushed=$pushed"
             echo "device=$(echo "$headsets" | jq -r '.[0].device')"
             echo "tooling=$tooling"
             echo "tested=$tested"
@@ -189,14 +199,23 @@ jobs:
           echo "name=$kind-$DEVICE-$key" >> "$GITHUB_OUTPUT"
       - name: An earlier build of the same content
         id: earlier
-        # Not for a push: it compiles, and so refills its branch's ccache (see the top).
-        if: steps.key.outputs.name && matrix.build == 'a' && github.event_name != 'push'
+        # Not for a push to a branch: it compiles, and so refills its branch's ccache (see the top). A tag takes
+        # its commit's push build.
+        if: steps.key.outputs.name && matrix.build == 'a' && (github.event_name != 'push' || github.ref_type == 'tag')
         env:
           GH_TOKEN: ${{ github.token }}
           NAME: ${{ steps.key.outputs.name }}
+          PUSHED: ${{ needs.plan.outputs.pushed }}
           OURS: "[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == ${{ github.repository_id }})][0].id // empty"
         run: |
-          id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=30" --jq "$OURS")
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            id=""
+            [ -z "$PUSHED" ] || id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PUSHED/artifacts" \
+              --jq "[.artifacts[] | select((.expired | not) and (.name | startswith(\"check-$DEVICE-\")))][0].id // empty")
+            NAME="the push build's kernel (run $PUSHED)"
+          else
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=30" --jq "$OURS")
+          fi
           if [ -n "$id" ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > earlier.zip
             mkdir -p overpressure/out/kernel && unzip -q earlier.zip -d overpressure/out/kernel && rm earlier.zip
@@ -326,8 +345,6 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: kernel-${{ needs.plan.outputs.device }}-*
-      - name: The same kernel twice
-        run: diff -r -x tooling.json "kernel-$DEVICE-a" "kernel-$DEVICE-b"
       - name: The history since the headset's previous tag
         run: |
           # Commits only, no trees: Valve's branch and the headset's tags, with all their history.
@@ -339,6 +356,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+          PUSHED: ${{ needs.plan.outputs.pushed }}
         run: |
           camera=$(jq -r .camera_table build.json)
           if [ "$camera" != none ]; then
@@ -358,7 +376,12 @@ jobs:
           prev=$("${git[@]}" tag -l "$DEVICE/*" --sort=v:refname | grep -B1 -xF "$TAG" | grep -vxF "$TAG" || true)
           valve_now=$("${git[@]}" merge-base "$TAG" valve/7.2)
           {
-            echo "Built from ${GITHUB_SHA} by overpressure's tooling, twice on two machines, with the same result."
+            if [ -n "$PUSHED" ]; then
+              echo "Built from ${GITHUB_SHA} by overpressure's tooling, in the push build of the headset's branch" \
+                "($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$PUSHED)."
+            else
+              echo "Built from ${GITHUB_SHA} by overpressure's tooling, in this tag's run."
+            fi
             echo
             echo "Tooling:"
             echo
