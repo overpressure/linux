@@ -16,6 +16,7 @@
 #include <linux/string_helpers.h>
 #include <linux/devcoredump.h>
 #include <linux/sched/task.h>
+#include <uapi/linux/sched/types.h>
 #include <linux/sched/mm.h>
 #include <linux/utsname.h>
 
@@ -501,6 +502,13 @@ static void get_comm_cmdline(struct msm_gem_submit *submit, char **comm, char **
 	put_task_struct(task);
 }
 
+static void hangcheck_ring_timer_reset(struct msm_gpu *gpu, struct msm_ringbuffer *ring)
+{
+	struct msm_drm_private *priv = gpu->dev->dev_private;
+	mod_timer(&ring->hangcheck_timer,
+			  round_jiffies_up(jiffies + msecs_to_jiffies(priv->hangcheck_period)));
+}
+
 static void recover_worker(struct kthread_work *work)
 {
 	struct msm_gpu *gpu = container_of(work, struct msm_gpu, recover_work);
@@ -681,6 +689,13 @@ static void recover_worker(struct kthread_work *work)
 	pm_runtime_put(&gpu->pdev->dev);
 
 out_unlock:
+	/* make sure hangcheck timers are active on active rings */
+	for (i = 0; i < gpu->nr_rings + !!gpu->lpac_rb; i++) {
+		struct msm_ringbuffer *ring = i < gpu->nr_rings ? gpu->rb[i] : gpu->lpac_rb;
+		if (fence_after(ring->fctx->last_fence, ring->hangcheck_fence))
+			hangcheck_ring_timer_reset(gpu, ring);
+	}
+
 	mutex_unlock(&gpu->lock);
 
 	msm_gpu_retire(gpu);
@@ -723,13 +738,6 @@ void msm_gpu_fault_crashstate_capture(struct msm_gpu *gpu, struct msm_gpu_fault_
 
 resume_smmu:
 	mutex_unlock(&gpu->lock);
-}
-
-static void hangcheck_ring_timer_reset(struct msm_gpu *gpu, struct msm_ringbuffer *ring)
-{
-	struct msm_drm_private *priv = gpu->dev->dev_private;
-	mod_timer(&ring->hangcheck_timer,
-			  round_jiffies_up(jiffies + msecs_to_jiffies(priv->hangcheck_period)));
 }
 
 static bool made_progress(struct msm_gpu *gpu, struct msm_ringbuffer *ring)
@@ -1032,6 +1040,20 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
 	}
 
 	sched_set_fifo_low(gpu->worker->task);
+
+	/* With kernel.sched_util_clamp_min_rt_default = 64, RT tasks are not guaranteed
+	 * the top OPP while runnable. Give gpu-worker a custom floor of 512, which was
+	 * experimentally determined to give it sufficient bandwidth to complete its work.
+	 */
+	{
+		struct sched_attr ua = {
+			.sched_flags = SCHED_FLAG_KEEP_ALL | SCHED_FLAG_UTIL_CLAMP_MIN,
+			.sched_util_min = SCHED_CAPACITY_SCALE / 2,
+		};
+
+		if (sched_setattr_nocheck(gpu->worker->task, &ua))
+			pr_warn_once("msm: could not set uclamp_min on gpu-worker\n");
+	}
 
 	mutex_init(&gpu->active_lock);
 	mutex_init(&gpu->lock);
