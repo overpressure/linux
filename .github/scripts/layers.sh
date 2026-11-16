@@ -5,10 +5,11 @@
 #   layers.sh FROM
 #
 # For every layer that takes its changes from FROM (.github/layers) and lacks some of FROM's commits,
-# a pull request from FROM into it, unless one is open. Its checks build the kernel of every headset
-# whose branch is the layer or built on it (.github/workflows/build.yml); it is merged with a merge
-# commit, and its merge moves the change on. GH_TOKEN is the Layers app's token where there is one: a
-# pull request opened with the workflow's own token starts no workflow.
+# a pull request from FROM into it, unless one is open. A pull request opened with the workflow's own
+# token (GH_TOKEN) starts no workflow, so this starts its Build: a run on the layer with head=FROM, which
+# builds every headset whose branch is the layer or built on it with FROM merged in and sets the status ci
+# on FROM's commit (.github/workflows/build.yml). It is merged with a merge commit, and its merge moves the
+# change on. An open pull request's Build starts again: FROM may have moved.
 set -euo pipefail
 from=${1:?usage: layers.sh FROM}
 repo=${GITHUB_REPOSITORY:-overpressure/linux}
@@ -25,7 +26,8 @@ grep -v '^#' "$layers" | while read -r source into; do
 	fi
 	open=$(gh pr list --repo "$repo" --head "$from" --base "$into" --state open --json number --jq '.[0].number // empty')
 	if [ -n "$open" ]; then
-		say "$from into $into: #$open is open ($ahead commits)."
+		gh workflow run build.yml --repo "$repo" --ref "$into" -f head="$from"
+		say "$from into $into: #$open is open ($ahead commits); its Build started."
 		continue
 	fi
 	head=$(gh api "repos/$repo/branches/$from" --jq .commit.sha)
@@ -49,5 +51,6 @@ grep -v '^#' "$layers" | while read -r source into; do
 		echo "A conflict is resolved here. Nothing is released until a headset's tag."
 	} > "$body"
 	gh pr create --repo "$repo" --head "$from" --base "$into" --title "$title" --body-file "$body" >/dev/null
-	say "$from into $into: pull request opened ($ahead commits)."
+	gh workflow run build.yml --repo "$repo" --ref "$into" -f head="$from"
+	say "$from into $into: pull request opened ($ahead commits), its Build started."
 done

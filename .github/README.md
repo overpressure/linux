@@ -28,8 +28,8 @@ by such pull requests with a passing `ci` check, `valve/7.2` only move forward, 
 | Workflow | When | What |
 | --- | --- | --- |
 | [Valve](workflows/valve.yml) | Mondays 05:23 UTC, and by hand | moves `valve/7.2` forward to Valve's newest commit ([scripts/valve.sh](scripts/valve.sh)) and starts Layers for it; a rewritten Valve branch fails the run. A schedule runs only from the default branch's copy |
-| [Layers](workflows/layers.yml) | a push to a layer, and by hand | opens a pull request from the branch into every layer built on it that lacks its commits, unless one is open ([scripts/layers.sh](scripts/layers.sh)) |
-| [Build](workflows/build.yml) | pull requests, pushes to a headset's branch, tags | builds each headset's kernel; for a pull request into a layer without a headset, every headset's branch built on it with the pull request merged in; lints the scripts and workflows; releases tags. Its `ci` job is the required check |
+| [Layers](workflows/layers.yml) | a push to a layer, and by hand | opens a pull request from the branch into every layer built on it that lacks its commits, unless one is open, and starts its Build ([scripts/layers.sh](scripts/layers.sh)) |
+| [Build](workflows/build.yml) | pull requests, pushes to a headset's branch, tags, and the Layers workflow's runs for its pull requests | builds each headset's kernel; for a pull request into a layer without a headset, every headset's branch built on it with the pull request merged in; lints the scripts and workflows; releases tags. Its `ci` job is the required check |
 
 Each week, after the Valve workflow: review and merge its pull request into `common/7.2`, then the pull requests that
 follow up the layers, each once its `ci` passes.
@@ -57,17 +57,16 @@ A release is an exact pin, not a channel: there are no preview or beta kernels h
 tag, its own release checklist verifies it on the hardware (phoenix's
 [docs/release-checklist.md](https://github.com/overpressure/phoenix/blob/main/docs/release-checklist.md)).
 
-## The Layers app
+## The layers' pull requests
 
-A pull request opened with a workflow's own token starts no workflow, so Layers opens its pull requests with a
-GitHub App's token. Without the app it falls back to the workflow's token and warns: start such a pull request's
-Build by hand (re-run its failed Build run, or close and reopen it).
+Layers opens its pull requests with the workflow's own token, and a pull request opened with it starts no workflow.
+So Layers starts each one's Build itself: a run on the pull request's base branch with `head` set to the branch
+that moves up (`valve/7.2` among them, whose tree has no workflows). It builds every headset's branch on that base
+with `head` merged in, and sets the status `ci` on `head`'s commit, the check the pull request waits for. Its own
+gate job is named `verdict for <head>`: that run belongs to the base's commit, which another pull request may have
+as its head.
 
-1. Create a GitHub App owned by the `overpressure` organization (Settings, Developer settings, GitHub Apps): no
-   webhook, repository permissions **Contents: Read and write** and **Pull requests: Read and write**, installable
-   only on this account.
-2. Generate a private key, and install the app on `overpressure/linux` only.
-3. In this repository's Actions secrets: `LAYERS_APP_ID`, the app's client ID (or its app ID), and
-   `LAYERS_APP_PRIVATE_KEY`, the whole private key file.
-
-The pull requests then show the app as their author, and their Build runs as for any other pull request.
+Each content is built once. A check of a change is keyed by its source tree, so the layers' pull requests and the
+push after a merge find the build of the pull request that brought the change and take seconds; only a tag builds
+again, twice and keyed by its commit, which `uname -v` and the release name. One change costs one build in its
+pull request and two in its headset's tag.

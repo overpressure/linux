@@ -6,18 +6,26 @@
 # - a pull request into a headset's branch builds its merge;
 # - a pull request into a layer without a headset (common/, sm8250/) builds every headset's branch built
 #   on that layer (.github/layers) with the pull request's merge merged in, in the runner, not pushed;
+# - a layer's pull request, which the Layers workflow opens with the workflow's own token (one that starts
+#   no workflow), is built by a run the Layers workflow starts on the pull request's base branch with
+#   `head` (the branch that moves up, valve/7.2 among them, whose tree has no workflows): every headset's
+#   branch on that base is built with `head` merged in, and the run sets the status `ci` on `head`'s commit;
 # - a push to a headset's branch builds it; a tag (<headset>/<version>-<n>) builds twice on two machines
 #   and is released only when both give the same files.
 #
-# The required check is the gate job `ci`, which passes only when every job before it did. Checks belong
-# to a commit, and a layer's pull request has the layer's own head commit as its head, so a run on that
-# commit with nothing to build would pass the pull request's check for it. Pushes to the layers without a
-# headset therefore start no run (the push branches leave them out, and headsets.sh refuses a push to
-# one): only a pull request's own run, or a headset branch's, gives a commit its `ci`.
+# The required check is `ci`: the gate job, which passes only when every job before it did, or the status
+# a run with `head` sets. Checks belong to a commit, and a layer's pull request has the layer's own head
+# commit as its head, so a run on that commit with nothing to build would pass the pull request's check
+# for it. Pushes to the layers without a headset therefore start no run (the push branches leave them out,
+# and headsets.sh refuses a push to one), and a run with `head`, which runs on its base's commit, names its
+# gate job otherwise: only a pull request's own run, a headset branch's, or the status on `head` gives a
+# commit its `ci`.
 #
-# Each content is built once: the key hashes the commit (uname -v names it), the headset's kernel/
-# folder and the build image's pin, and a key built before (by this repository, never a fork) is
-# downloaded instead of built again.
+# Each content is built once. A check of a change (a pull request, a push, a run with `head`) is keyed by
+# the source tree, the headset's kernel/ folder and the build image's pin: the layers' pull requests and the
+# push after a merge build the same tree as the pull request before them and find its build. A tag's two
+# builds are keyed by the commit instead (uname -v names it, and a release names its tag's commit). A key
+# built before (by this repository, never a fork) is downloaded instead of built again.
 name: Build
 
 on:
@@ -27,23 +35,32 @@ on:
     tags: ["*/*-*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      head:
+        description: "a layer pull request's head (a branch): built merged into each headset branch on this base"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.ref }}-${{ inputs.head }}
   cancel-in-progress: false
 
 jobs:
   plan:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: write # the pending ci on a layer pull request's head
     outputs:
       headsets: ${{ steps.plan.outputs.headsets }}
       builds: ${{ steps.plan.outputs.builds }}
       device: ${{ steps.plan.outputs.device }}
       tooling: ${{ steps.plan.outputs.tooling }}
+      tested: ${{ steps.plan.outputs.tested }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -55,11 +72,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.base_ref }}
+          HEAD: ${{ inputs.head }}
         run: |
+          tested=""
           case $EVENT in
           pull_request) headsets=$(bash .github/scripts/headsets.sh "$BASE") ;;
           push) headsets=$(bash .github/scripts/headsets.sh --self "$GITHUB_REF_NAME") ;;
-          *) headsets=$(bash .github/scripts/headsets.sh "$GITHUB_REF_NAME") ;;
+          *)
+            headsets=$(bash .github/scripts/headsets.sh "$GITHUB_REF_NAME")
+            if [ -n "$HEAD" ]; then
+              # A layer pull request's head, merged into every headset branch on this base, its own included.
+              headsets=$(echo "$headsets" | jq -c 'map(.merge = true)')
+              tested=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD" --jq .sha)
+              gh api "repos/$GITHUB_REPOSITORY/statuses/$tested" --silent -f state=pending -f context=ci \
+                -f description="building $HEAD into $GITHUB_REF_NAME's headsets" \
+                -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            fi
+            ;;
           esac
           builds='["a"]'
           [ "$GITHUB_REF_TYPE" != tag ] || builds='["a", "b"]'
@@ -69,6 +98,7 @@ jobs:
             echo "builds=$builds"
             echo "device=$(echo "$headsets" | jq -r '.[0].device')"
             echo "tooling=$tooling"
+            echo "tested=$tested"
           } >> "$GITHUB_OUTPUT"
           echo "$headsets" | jq -r '.[] | "\(.device): \(.branch)\(if .merge then ", the tested commit merged in" else "" end), recipe \(.recipe)"'
           echo "overpressure: $tooling"
@@ -105,6 +135,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: overpressure/out/linux
+          ref: ${{ needs.plan.outputs.tested }} # a layer pull request's head; else the run's commit
           fetch-depth: 1
       - name: Merged into ${{ matrix.headset.branch }}
         id: merge
@@ -131,12 +162,19 @@ jobs:
       - name: The content's key
         id: key
         if: steps.merge.outputs.conflict != 'true'
+        env:
+          TAG: ${{ github.ref_type == 'tag' }}
         run: |
-          commit=$(git -C overpressure/out/linux rev-parse HEAD)
+          # A tag's build by its commit (what it releases names it); every other build by its source tree.
+          if [ "$TAG" = true ]; then
+            content=$(git -C overpressure/out/linux rev-parse HEAD) kind=release
+          else
+            content=$(git -C overpressure/out/linux rev-parse 'HEAD^{tree}') kind=check
+          fi
           recipe=$(git -C "overpressure/devices/$DEVICE" rev-parse HEAD:kernel)
           image=$(git -C overpressure rev-parse HEAD:overpressure/linux.py)
-          key=$(echo "$commit $recipe $image" | sha256sum | cut -c1-32)
-          echo "name=build-$DEVICE-$key" >> "$GITHUB_OUTPUT"
+          key=$(echo "$content $recipe $image" | sha256sum | cut -c1-32)
+          echo "name=$kind-$DEVICE-$key" >> "$GITHUB_OUTPUT"
       - name: An earlier build of the same content
         id: earlier
         if: steps.key.outputs.name && matrix.build == 'a'
@@ -325,16 +363,40 @@ jobs:
 
   ci:
     # The required check (see the top): fails unless every job before it succeeded, the release only on tags.
+    # A run with `head` runs on its base's commit: its gate is named otherwise, and its verdict goes to `head`.
+    name: ${{ inputs.head && format('verdict for {0}', inputs.head) || 'ci' }}
     if: always()
     needs: [plan, kernel, lint, release]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write # the ci on a layer pull request's head
     steps:
       - name: Every job
+        id: verdict
         env:
           NEEDS: ${{ toJSON(needs) }}
           RELEASE: ${{ github.ref_type == 'tag' && 'success' || 'skipped' }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e --arg release "$RELEASE" \
-            'all(to_entries[]; .value.result == (if .key == "release" then $release else "success" end))' > /dev/null
+          if echo "$NEEDS" | jq -e --arg release "$RELEASE" \
+            'all(to_entries[]; .value.result == (if .key == "release" then $release else "success" end))' > /dev/null; then
+            echo "state=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=failure" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The layer pull request's ci
+        if: always() && needs.plan.outputs.tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED: ${{ needs.plan.outputs.tested }}
+          STATE: ${{ steps.verdict.outputs.state || 'failure' }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$TESTED" --silent -f state="$STATE" -f context=ci \
+            -f description="its merge into $GITHUB_REF_NAME's headsets: $STATE" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: The verdict
+        env:
+          STATE: ${{ steps.verdict.outputs.state }}
+        run: '[ "$STATE" = success ]'
