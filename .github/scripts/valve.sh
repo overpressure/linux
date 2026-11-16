@@ -33,7 +33,14 @@ else
 		fi
 		git fetch -q --deepen=50 "$MIRROR" "$new"
 	done
-	git push -q origin "$new:refs/heads/$BASE"
+	# GitHub's check of the branch's rules can fail by itself ("fatal error in commit_refs_rules"):
+	# a few more tries, a minute apart. A refused push (not a fast-forward) fails each time and stops.
+	for attempt in 1 2 3 4; do
+		git push -q origin "$new:refs/heads/$BASE" && break
+		[ "$attempt" -lt 4 ] || { say "pushing $BASE failed four times"; exit 1; }
+		say "pushing $BASE failed (try $attempt of 4): again in a minute"
+		sleep 60
+	done
 	say "$BASE moved from ${old:0:12} to ${new:0:12} ($(git rev-list --count "$old..$new") commits)."
 fi
 # A push by the workflow's token starts no workflow: the Layers workflow is started by hand, from the
