@@ -67,9 +67,11 @@ gate job is named `verdict for <head>`: that run belongs to the base's commit, w
 as its head.
 
 Each content is built once. A check of a change is keyed by the kernel's sources (the tree without `.github/`, so a
-change to the CI alone builds nothing new), so the layers' pull requests and the push after a merge find the build of
-the pull request that brought the change and take seconds; only a tag builds
-again, twice and keyed by its commit, which `uname -v` and the release name. One change costs one build in its
-pull request and two in its headset's tag. A check build compiles through ccache, whose objects the cache of its
-branch, its base or the default branch carries over, so it recompiles only what the change touches; a tag's two
+change to the CI alone builds nothing new), so the layers' pull requests find the build of the pull request that
+brought the change and take seconds; a tag builds again, twice and keyed by its commit, which `uname -v` and the
+release name. One change costs one build in its pull request, one through a warm ccache on the push after its merge,
+and two in its headset's tag. A check build compiles through ccache, whose objects the cache of its
+branch, its base or the default branch carries over, so it recompiles only what the change touches. GitHub keeps a
+run's cache for its own branch, and only the default branch's reaches every pull request: so a push to a headset's
+branch compiles through ccache instead of taking the pull request's build, and keeps that cache current; a tag's two
 builds start clean (a change to the kernel's configuration touches every file, so it compiles everything anyway).
