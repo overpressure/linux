@@ -5595,7 +5595,14 @@
 
 				opp-600000000 {
 					opp-hz = /bits/ 64 <600000000>;
-					required-opps = <&rpmhpd_opp_turbo_l1>, <&rpmhpd_opp_turbo_l1>;
+					required-opps = <&rpmhpd_opp_turbo_l1>,
+							<&rpmhpd_opp_turbo_l1>;
+				};
+
+				opp-650000000 {
+					opp-hz = /bits/ 64 <650000000>;
+					required-opps = <&rpmhpd_opp_turbo_l1>,
+							<&rpmhpd_opp_turbo_l1>;
 				};
 			};
 		};

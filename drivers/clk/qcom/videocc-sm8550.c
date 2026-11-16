@@ -142,6 +142,7 @@ static const struct freq_tbl ftbl_video_cc_mvs0_clk_src_sm8650[] = {
 	F(1440000000, P_VIDEO_CC_PLL0_OUT_MAIN, 1, 0, 0),
 	F(1600000000, P_VIDEO_CC_PLL0_OUT_MAIN, 1, 0, 0),
 	F(1800000000, P_VIDEO_CC_PLL0_OUT_MAIN, 1, 0, 0),
+	F(1950000000, P_VIDEO_CC_PLL0_OUT_MAIN, 1, 0, 0),
 	{ }
 };
 
@@ -456,7 +457,7 @@ static struct gdsc video_cc_mvs0c_gdsc = {
 		.name = "video_cc_mvs0c_gdsc",
 	},
 	.pwrsts = PWRSTS_OFF_ON,
-	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | ALWAYS_ON,
+	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
 };
 
 static struct gdsc video_cc_mvs0_gdsc = {
@@ -469,7 +470,7 @@ static struct gdsc video_cc_mvs0_gdsc = {
 	},
 	.pwrsts = PWRSTS_OFF_ON,
 	.parent = &video_cc_mvs0c_gdsc.pd,
-	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | HW_CTRL_TRIGGER | ALWAYS_ON,
+	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | HW_CTRL_TRIGGER,
 };
 
 static struct gdsc video_cc_mvs1c_gdsc = {
