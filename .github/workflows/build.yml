@@ -21,11 +21,14 @@
 # gate job otherwise: only a pull request's own run, a headset branch's, or the status on `head` gives a
 # commit its `ci`.
 #
-# Each content is built once. A check of a change (a pull request, a push, a run with `head`) is keyed by
-# the kernel's sources (the tree without .github, the CI), the headset's kernel/ folder and the build image's pin: the layers' pull requests and the
-# push after a merge build the same tree as the pull request before them and find its build. A tag's two
-# builds are keyed by the commit instead (uname -v names it, and a release names its tag's commit). A key
-# built before (by this repository, never a fork) is downloaded instead of built again.
+# Each content is built once. A check of a change (a pull request, a run with `head`) is keyed by the
+# kernel's sources (the tree without .github, the CI), the headset's kernel/ folder and the build image's pin:
+# the layers' pull requests build the same tree as the pull request before them and find its build. A key
+# built before (by this repository, never a fork) is downloaded instead of built again. A push to a headset's
+# branch compiles anyway, through ccache: GitHub keeps a run's cache for its own branch, and only the default
+# branch's is read by every pull request, so the push after a merge is what keeps that cache current. A
+# tag's two builds are keyed by the commit instead (uname -v names it, and a release names its tag's commit)
+# and start clean.
 name: Build
 
 on:
@@ -179,7 +182,8 @@ jobs:
           echo "name=$kind-$DEVICE-$key" >> "$GITHUB_OUTPUT"
       - name: An earlier build of the same content
         id: earlier
-        if: steps.key.outputs.name && matrix.build == 'a'
+        # Not for a push: it compiles, and so refills its branch's ccache (see the top).
+        if: steps.key.outputs.name && matrix.build == 'a' && github.event_name != 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           NAME: ${{ steps.key.outputs.name }}
