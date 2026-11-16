@@ -207,13 +207,32 @@ jobs:
         run: |
           uv sync --locked
           uv run python -m overpressure container pull
+      # A check build compiles through ccache (build-tree.sh's CCACHE_DIR), whose objects carry over from the
+      # newest cache this run may read: its own branch's, its base's, the default branch's. A tag's two
+      # builds start clean: they are the test that the kernel is reproducible.
+      - name: The compiled objects of earlier builds
+        if: steps.key.outputs.name && steps.earlier.outputs.found != 'true' && github.ref_type != 'tag'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: overpressure/out/ccache
+          key: ccache-${{ matrix.headset.device }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.headset.device }}-
       - name: The kernel
         if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
         working-directory: overpressure
+        env:
+          CCACHE: ${{ github.ref_type != 'tag' && '/work/out/ccache' || '' }}
         run: |
           uv run python -m overpressure container run -- \
+            env ${CCACHE:+CCACHE_DIR="$CCACHE"} \
             bash "devices/$DEVICE/kernel/build-tree.sh" out/linux /var/tmp/kernel out/kernel
           cat out/kernel/build.json
+      - name: The compiled objects, for the next build
+        if: always() && steps.key.outputs.name && steps.earlier.outputs.found != 'true' && github.ref_type != 'tag'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: overpressure/out/ccache
+          key: ccache-${{ matrix.headset.device }}-${{ github.run_id }}
       - name: The tooling it was built with
         if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
         run: |
