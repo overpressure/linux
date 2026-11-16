@@ -134,6 +134,13 @@ jobs:
           repository: ${{ github.repository_owner }}/${{ matrix.headset.device }}
           ref: ${{ matrix.headset.recipe }}
           path: overpressure/devices/${{ matrix.headset.device }}
+      # The run's own scripts: the tree under test may have none (valve/7.2, a layer pull request's head).
+      - name: This run's scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .ci
+          fetch-depth: 1
+          sparse-checkout: .github
       - name: This tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -148,7 +155,7 @@ jobs:
           BRANCH: ${{ matrix.headset.branch }}
         run: |
           tested=$(git rev-parse HEAD)
-          bash .github/scripts/history.sh --merge "$BRANCH" "$tested" > /dev/null
+          bash "$GITHUB_WORKSPACE/.ci/.github/scripts/history.sh" --merge "$BRANCH" "$tested" > /dev/null
           git checkout -q -B headset "origin/$BRANCH"
           # The same merge gives the same commit, so a second run finds the first one's build.
           GIT_AUTHOR_DATE=$(git show -s --format=%cI "$tested")
