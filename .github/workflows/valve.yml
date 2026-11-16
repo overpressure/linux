@@ -5,6 +5,8 @@
 name: Valve
 
 on:
+  # Mondays at 05:23 UTC. GitHub runs a schedule only from the default branch's copy of this file
+  # (phoenix/7.2), so a change here takes effect once it has moved up the layers into it.
   schedule:
     - cron: "23 5 * * 1"
   workflow_dispatch:
