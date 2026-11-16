@@ -5,8 +5,10 @@
 #   layers.sh FROM
 #
 # For every layer that takes its changes from FROM (.github/layers) and lacks some of FROM's commits,
-# a pull request from FROM into it, unless one is open. Its checks build the headset's kernel where the
-# layer is a headset's; it is merged with a merge commit, and its merge moves the change on.
+# a pull request from FROM into it, unless one is open. Its checks build the kernel of every headset
+# whose branch is the layer or built on it (.github/workflows/build.yml); it is merged with a merge
+# commit, and its merge moves the change on. GH_TOKEN is the Layers app's token where there is one: a
+# pull request opened with the workflow's own token starts no workflow.
 set -euo pipefail
 from=${1:?usage: layers.sh FROM}
 repo=${GITHUB_REPOSITORY:-overpressure/linux}
