@@ -70,4 +70,6 @@ Each content is built once. A check of a change is keyed by the kernel's sources
 change to the CI alone builds nothing new), so the layers' pull requests and the push after a merge find the build of
 the pull request that brought the change and take seconds; only a tag builds
 again, twice and keyed by its commit, which `uname -v` and the release name. One change costs one build in its
-pull request and two in its headset's tag.
+pull request and two in its headset's tag. A check build compiles through ccache, whose objects the cache of its
+branch, its base or the default branch carries over, so it recompiles only what the change touches; a tag's two
+builds start clean (a change to the kernel's configuration touches every file, so it compiles everything anyway).
