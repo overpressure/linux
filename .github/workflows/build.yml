@@ -22,7 +22,7 @@
 # commit its `ci`.
 #
 # Each content is built once. A check of a change (a pull request, a push, a run with `head`) is keyed by
-# the source tree, the headset's kernel/ folder and the build image's pin: the layers' pull requests and the
+# the kernel's sources (the tree without .github, the CI), the headset's kernel/ folder and the build image's pin: the layers' pull requests and the
 # push after a merge build the same tree as the pull request before them and find its build. A tag's two
 # builds are keyed by the commit instead (uname -v names it, and a release names its tag's commit). A key
 # built before (by this repository, never a fork) is downloaded instead of built again.
@@ -165,11 +165,13 @@ jobs:
         env:
           TAG: ${{ github.ref_type == 'tag' }}
         run: |
-          # A tag's build by its commit (what it releases names it); every other build by its source tree.
+          # A tag's build by its commit (what it releases names it); every other build by the kernel's sources:
+          # the tree's top-level entries but .github, which holds the CI and none of what the kernel is built from.
           if [ "$TAG" = true ]; then
             content=$(git -C overpressure/out/linux rev-parse HEAD) kind=release
           else
-            content=$(git -C overpressure/out/linux rev-parse 'HEAD^{tree}') kind=check
+            content=$(git -C overpressure/out/linux ls-tree HEAD | grep -v "$(printf '\t').github$" | sha256sum | cut -c1-64)
+            kind=check
           fi
           recipe=$(git -C "overpressure/devices/$DEVICE" rev-parse HEAD:kernel)
           image=$(git -C overpressure rev-parse HEAD:overpressure/linux.py)

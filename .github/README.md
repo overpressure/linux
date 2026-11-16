@@ -66,7 +66,8 @@ with `head` merged in, and sets the status `ci` on `head`'s commit, the check th
 gate job is named `verdict for <head>`: that run belongs to the base's commit, which another pull request may have
 as its head.
 
-Each content is built once. A check of a change is keyed by its source tree, so the layers' pull requests and the
-push after a merge find the build of the pull request that brought the change and take seconds; only a tag builds
+Each content is built once. A check of a change is keyed by the kernel's sources (the tree without `.github/`, so a
+change to the CI alone builds nothing new), so the layers' pull requests and the push after a merge find the build of
+the pull request that brought the change and take seconds; only a tag builds
 again, twice and keyed by its commit, which `uname -v` and the release name. One change costs one build in its
 pull request and two in its headset's tag.
