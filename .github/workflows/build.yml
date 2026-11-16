@@ -375,7 +375,11 @@ jobs:
           cat build.json SHA256SUMS
 
           git=(git -C ../history.git)
-          prev=$("${git[@]}" tag -l "$DEVICE/*" --sort=v:refname | grep -B1 -xF "$TAG" | grep -vxF "$TAG" || true)
+          # The previous release, not the previous tag: a tag whose release failed has none, and its changes
+          # belong to this one.
+          prev=$({ gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName \
+            --jq ".[].tagName | select(startswith(\"$DEVICE/\"))"; echo "$TAG"; } |
+            sort -uV | grep -B1 -xF "$TAG" | grep -vxF "$TAG" || true)
           valve_now=$("${git[@]}" merge-base "$TAG" valve/7.2)
           {
             if [ -n "$PUSHED" ]; then
