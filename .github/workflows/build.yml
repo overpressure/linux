@@ -1,79 +1,185 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# Every headset's branch, pull request and tag of this tree, built with overpressure's tooling (its
-# build container) and the headset's build-tree.sh (its repository overpressure/<headset>, dropped into
-# overpressure's devices/), after the headset's own tests. Each content is built once: the key hashes
-# this tree, the headset's kernel/ folder and the build image's pin,
-# and a key built before (by a pull request of this repository, never a fork's) is not built again when
-# the merge lands. A tag (<headset>/<version>-<n>) is released only when two builds on two machines give
-# the same files: the earlier build of its content, or a second one now, and one more of its own. The
-# layers without a headset (valve/, common/, sm8250/) have nothing to build: their check passes at once.
+# Every headset's kernel this tree makes, built with overpressure's tooling (its build container) and the
+# headset's build-tree.sh (its repository overpressure/<headset>, dropped into overpressure's devices/),
+# after the headset's own tests (.github/scripts/headsets.sh says which):
+#
+# - a pull request into a headset's branch builds its merge;
+# - a pull request into a layer without a headset (common/, sm8250/) builds every headset's branch built
+#   on that layer (.github/layers) with the pull request's merge merged in, in the runner, not pushed;
+# - a layer's pull request, which the Layers workflow opens with the workflow's own token (one that starts
+#   no workflow), is built by a run the Layers workflow starts on the pull request's base branch with
+#   `head` (the branch that moves up, valve/7.2 among them, whose tree has no workflows): every headset's
+#   branch on that base is built with `head` merged in, and the run sets the status `ci` on `head`'s commit;
+# - a push to a headset's branch builds it; a tag (<headset>/<version>-<n>) builds twice on two machines
+#   and is released only when both give the same files.
+#
+# The required check is `ci`: the gate job, which passes only when every job before it did, or the status
+# a run with `head` sets. Checks belong to a commit, and a layer's pull request has the layer's own head
+# commit as its head, so a run on that commit with nothing to build would pass the pull request's check
+# for it. Pushes to the layers without a headset therefore start no run (the push branches leave them out,
+# and headsets.sh refuses a push to one), and a run with `head`, which runs on its base's commit, names its
+# gate job otherwise: only a pull request's own run, a headset branch's, or the status on `head` gives a
+# commit its `ci`.
+#
+# Each content is built once. A check of a change (a pull request, a push, a run with `head`) is keyed by
+# the kernel's sources (the tree without .github, the CI), the headset's kernel/ folder and the build image's pin: the layers' pull requests and the
+# push after a merge build the same tree as the pull request before them and find its build. A tag's two
+# builds are keyed by the commit instead (uname -v names it, and a release names its tag's commit). A key
+# built before (by this repository, never a fork) is downloaded instead of built again.
 name: Build
 
 on:
   push:
-    branches: ["*/[0-9]*"] # the layers; other branches build as pull requests
+    # The headsets' branches; the layers without a headset build in their pull requests (see above).
+    branches: ["*/[0-9]*", "!valve/*", "!common/*", "!sm8250/*"]
     tags: ["*/*-*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      head:
+        description: "a layer pull request's head (a branch): built merged into each headset branch on this base"
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.ref }}-${{ inputs.head }}
   cancel-in-progress: false
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      statuses: write # the pending ci on a layer pull request's head
+    outputs:
+      headsets: ${{ steps.plan.outputs.headsets }}
+      builds: ${{ steps.plan.outputs.builds }}
+      device: ${{ steps.plan.outputs.device }}
+      tooling: ${{ steps.plan.outputs.tooling }}
+      tested: ${{ steps.plan.outputs.tested }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+          sparse-checkout: .github
+      - name: What to build
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ inputs.head }}
+        run: |
+          tested=""
+          case $EVENT in
+          pull_request) headsets=$(bash .github/scripts/headsets.sh "$BASE") ;;
+          push) headsets=$(bash .github/scripts/headsets.sh --self "$GITHUB_REF_NAME") ;;
+          *)
+            headsets=$(bash .github/scripts/headsets.sh "$GITHUB_REF_NAME")
+            if [ -n "$HEAD" ]; then
+              # A layer pull request's head, merged into every headset branch on this base, its own included.
+              headsets=$(echo "$headsets" | jq -c 'map(.merge = true)')
+              tested=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD" --jq .sha)
+              gh api "repos/$GITHUB_REPOSITORY/statuses/$tested" --silent -f state=pending -f context=ci \
+                -f description="building $HEAD into $GITHUB_REF_NAME's headsets" \
+                -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            fi
+            ;;
+          esac
+          builds='["a"]'
+          [ "$GITHUB_REF_TYPE" != tag ] || builds='["a", "b"]'
+          tooling=$(gh api repos/overpressure/overpressure/commits/main --jq .sha)
+          {
+            echo "headsets=$headsets"
+            echo "builds=$builds"
+            echo "device=$(echo "$headsets" | jq -r '.[0].device')"
+            echo "tooling=$tooling"
+            echo "tested=$tested"
+          } >> "$GITHUB_OUTPUT"
+          echo "$headsets" | jq -r '.[] | "\(.device): \(.branch)\(if .merge then ", the tested commit merged in" else "" end), recipe \(.recipe)"'
+          echo "overpressure: $tooling"
+
   kernel:
+    needs: plan
+    name: kernel ${{ matrix.headset.device }} (${{ matrix.build }})
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
       contents: read
       actions: read # an earlier build of the same content
     strategy:
+      fail-fast: false
       matrix:
-        build: ${{ fromJSON(startsWith(github.ref, 'refs/tags/') && '["a", "b"]' || '["a"]') }}
-    outputs:
-      device: ${{ steps.headset.outputs.device }}
+        headset: ${{ fromJSON(needs.plan.outputs.headsets) }}
+        build: ${{ fromJSON(needs.plan.outputs.builds) }}
+    env:
+      DEVICE: ${{ matrix.headset.device }}
     steps:
       - name: overpressure's tooling
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: overpressure/overpressure
+          ref: ${{ needs.plan.outputs.tooling }}
           path: overpressure
       - name: The headset
-        id: headset
-        env:
-          GIT_TERMINAL_PROMPT: "0" # a layer has no repository of that name: no question, a failure
-        run: |
-          ref=${GITHUB_BASE_REF:-$GITHUB_REF_NAME} # a pull request: the branch it goes into
-          device=${ref%%/*}
-          if git clone -q --depth 1 "https://github.com/overpressure/$device.git" "overpressure/devices/$device" &&
-            [ -f "overpressure/devices/$device/kernel/build-tree.sh" ]; then
-            echo "device=$device" >> "$GITHUB_OUTPUT"
-          else
-            echo "$device is a layer without a headset: nothing to build"
-          fi
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/${{ matrix.headset.device }}
+          ref: ${{ matrix.headset.recipe }}
+          path: overpressure/devices/${{ matrix.headset.device }}
       - name: This tree
-        if: steps.headset.outputs.device
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: overpressure/out/linux
+          ref: ${{ needs.plan.outputs.tested }} # a layer pull request's head; else the run's commit
           fetch-depth: 1
+      - name: Merged into ${{ matrix.headset.branch }}
+        id: merge
+        if: matrix.headset.merge
+        working-directory: overpressure/out/linux
+        env:
+          BRANCH: ${{ matrix.headset.branch }}
+        run: |
+          tested=$(git rev-parse HEAD)
+          bash .github/scripts/history.sh --merge "$BRANCH" "$tested" > /dev/null
+          git checkout -q -B headset "origin/$BRANCH"
+          # The same merge gives the same commit, so a second run finds the first one's build.
+          GIT_AUTHOR_DATE=$(git show -s --format=%cI "$tested")
+          export GIT_AUTHOR_DATE GIT_COMMITTER_DATE=$GIT_AUTHOR_DATE
+          export GIT_AUTHOR_NAME=overpressure GIT_COMMITTER_NAME=overpressure
+          export GIT_AUTHOR_EMAIL=ci@overpressure.invalid GIT_COMMITTER_EMAIL=ci@overpressure.invalid
+          if git merge -q --no-ff -m "Merge ${tested:0:12} into $BRANCH (a build, not pushed)" "$tested"; then
+            echo "$BRANCH with ${tested:0:12} merged in: $(git rev-parse HEAD)"
+          else
+            git merge --abort
+            echo "::warning::${tested:0:12} conflicts with $BRANCH: not built here; the conflict is resolved, and built, in the pull request that brings it into $BRANCH"
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: The content's key
         id: key
-        if: steps.headset.outputs.device
+        if: steps.merge.outputs.conflict != 'true'
         env:
-          DEVICE: ${{ steps.headset.outputs.device }}
+          TAG: ${{ github.ref_type == 'tag' }}
         run: |
-          tree=$(git -C overpressure/out/linux rev-parse 'HEAD^{tree}')
+          # A tag's build by its commit (what it releases names it); every other build by the kernel's sources:
+          # the tree's top-level entries but .github, which holds the CI and none of what the kernel is built from.
+          if [ "$TAG" = true ]; then
+            content=$(git -C overpressure/out/linux rev-parse HEAD) kind=release
+          else
+            content=$(git -C overpressure/out/linux ls-tree HEAD | grep -v "$(printf '\t').github$" | sha256sum | cut -c1-64)
+            kind=check
+          fi
           recipe=$(git -C "overpressure/devices/$DEVICE" rev-parse HEAD:kernel)
           image=$(git -C overpressure rev-parse HEAD:overpressure/linux.py)
-          key=$(echo "$tree $recipe $image" | sha256sum | cut -c1-32)
-          echo "name=build-$DEVICE-$key" >> "$GITHUB_OUTPUT"
+          key=$(echo "$content $recipe $image" | sha256sum | cut -c1-32)
+          echo "name=$kind-$DEVICE-$key" >> "$GITHUB_OUTPUT"
       - name: An earlier build of the same content
         id: earlier
-        if: steps.headset.outputs.device && matrix.build == 'a'
+        if: steps.key.outputs.name && matrix.build == 'a'
         env:
           GH_TOKEN: ${{ github.token }}
           NAME: ${{ steps.key.outputs.name }}
@@ -87,76 +193,212 @@ jobs:
             echo "$NAME: built before (artifact $id)"
           fi
       - name: The headset's own tests
-        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
+        if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
         run: |
-          tests=overpressure/out/linux/tools/testing/overpressure/${{ steps.headset.outputs.device }}/run.sh
+          tests=overpressure/out/linux/tools/testing/overpressure/$DEVICE/run.sh
           if [ -f "$tests" ]; then bash "$tests"; else echo "no tests of its own"; fi
       - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
-        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
+        if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
         with:
           version: "0.9.26"
       - name: The build container
-        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
+        if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
         working-directory: overpressure
         run: |
           uv sync --locked
-          uv run python -m overpressure container build
+          uv run python -m overpressure container pull
       - name: The kernel
-        if: steps.headset.outputs.device && steps.earlier.outputs.found != 'true'
+        if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
         working-directory: overpressure
         run: |
           uv run python -m overpressure container run -- \
-            bash "devices/${{ steps.headset.outputs.device }}/kernel/build-tree.sh" \
-            out/linux /var/tmp/kernel out/kernel
+            bash "devices/$DEVICE/kernel/build-tree.sh" out/linux /var/tmp/kernel out/kernel
           cat out/kernel/build.json
+      - name: The tooling it was built with
+        if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
+        run: |
+          jq -n --arg device "$DEVICE" \
+            --arg overpressure "$(git -C overpressure rev-parse HEAD)" \
+            --arg headset "$(git -C "overpressure/devices/$DEVICE" rev-parse HEAD)" \
+            '{"overpressure/overpressure": $overpressure, ("overpressure/" + $device): $headset}' \
+            > overpressure/out/kernel/tooling.json
       - name: Kept for the next run
-        if: steps.headset.outputs.device && matrix.build == 'a' && steps.earlier.outputs.found != 'true'
+        if: steps.key.outputs.name && matrix.build == 'a' && steps.earlier.outputs.found != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.key.outputs.name }}
           path: overpressure/out/kernel
           if-no-files-found: error
       - name: Its files
-        if: steps.headset.outputs.device && startsWith(github.ref, 'refs/tags/')
+        if: steps.key.outputs.name && github.ref_type == 'tag'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: kernel-${{ matrix.build }}
+          name: kernel-${{ matrix.headset.device }}-${{ matrix.build }}
           path: overpressure/out/kernel
           if-no-files-found: error
 
-  release:
-    needs: kernel
-    if: needs.kernel.outputs.device && startsWith(github.ref, 'refs/tags/')
+  lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - name: The shell scripts (shellcheck)
+        run: |
+          shellcheck --version | sed -n 2p
+          git ls-files -z -- '.github/scripts/*.sh' 'tools/testing/overpressure/*.sh' | xargs -0 -r shellcheck
+      - name: The workflows (actionlint)
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive=$RUNNER_TEMP/actionlint.tar.gz
+          curl -fsSLo "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v$VERSION/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "$SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+      # Advisory for now: the pull request's own commits, as the kernel's maintainers would see them. A
+      # layer's pull request carries commits checked on their way into the layer, and Valve's.
+      - name: The pull request's commits (checkpatch, advisory)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if grep -v '^#' .github/layers | cut -d' ' -f1 | grep -qxF "$HEAD_REF"; then
+            echo "$HEAD_REF is a layer: its commits were checked on their way into it"
+            exit 0
+          fi
+          base=$(bash .github/scripts/history.sh "$BASE" "$HEAD_SHA")
+          git format-patch -q -o "$RUNNER_TEMP/patches" --no-merges "$base..$HEAD_SHA"
+          shopt -s nullglob
+          patches=("$RUNNER_TEMP"/patches/*.patch)
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo "no commits of its own"
+            exit 0
+          fi
+          scripts/checkpatch.pl --strict --no-signoff --show-types --ignore FILE_PATH_CHANGES "${patches[@]}"
+
+  release:
+    needs: [plan, kernel]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
+    env:
+      DEVICE: ${{ needs.plan.outputs.device }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: kernel-*
+          pattern: kernel-${{ needs.plan.outputs.device }}-*
       - name: The same kernel twice
+        run: diff -r -x tooling.json "kernel-$DEVICE-a" "kernel-$DEVICE-b"
+      - name: The history since the headset's previous tag
         run: |
-          diff -r kernel-a kernel-b
-          cd kernel-a
-          sha256sum -- * > SHA256SUMS
-          cat build.json SHA256SUMS
+          # Commits only, no trees: Valve's branch and the headset's tags, with all their history.
+          git clone -q --bare --filter=tree:0 --single-branch --branch valve/7.2 \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" history.git
+          git -C history.git fetch -q origin "+refs/tags/$DEVICE/*:refs/tags/$DEVICE/*"
       - name: The release
-        working-directory: kernel-a
+        working-directory: kernel-${{ needs.plan.outputs.device }}-a
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          camera=$(python3 -c 'import json; print(json.load(open("build.json"))["camera_table"])')
+          camera=$(jq -r .camera_table build.json)
           if [ "$camera" != none ]; then
             echo "this kernel compiles the camera table in ($camera): a release needs the driver to load it" >&2
             exit 1
           fi
+          # The tooling's commits that built these files (tooling.json, kept with the build) go into build.json.
+          tooling='{}'
+          [ ! -f tooling.json ] || tooling=$(cat tooling.json)
+          jq --argjson tooling "$tooling" '. + {tooling_commits: $tooling}' build.json > ../build.json
+          mv ../build.json build.json
+          rm -f tooling.json
+          sha256sum -- * > SHA256SUMS
+          cat build.json SHA256SUMS
+
+          git=(git -C ../history.git)
+          prev=$("${git[@]}" tag -l "$DEVICE/*" --sort=v:refname | grep -B1 -xF "$TAG" | grep -vxF "$TAG" || true)
+          valve_now=$("${git[@]}" merge-base "$TAG" valve/7.2)
           {
             echo "Built from ${GITHUB_SHA} by overpressure's tooling, twice on two machines, with the same result."
             echo
+            echo "Tooling:"
+            echo
+            jq -r '.tooling_commits | if length == 0 then "- not recorded" else to_entries[] |
+              "- [\(.key)@\(.value[0:12])](https://github.com/\(.key)/commit/\(.value))" end' build.json
+            echo
+            if [ -n "$prev" ]; then
+              valve_then=$("${git[@]}" merge-base "$prev" valve/7.2)
+              if [ "$valve_then" != "$valve_now" ]; then
+                echo "Valve's kernel: ${valve_then:0:12} → ${valve_now:0:12}" \
+                  "($("${git[@]}" rev-list --count "$valve_then..$valve_now") commits)"
+              else
+                echo "Valve's kernel: ${valve_now:0:12}, as in $prev"
+              fi
+              echo
+              echo "Changes since $prev:"
+              echo
+              changes=$("${git[@]}" log --no-merges --abbrev=12 --format='- %h %s' "$prev..$TAG" ^valve/7.2)
+              [ -n "$changes" ] || changes="- none: only merges"
+              echo "$changes"
+            else
+              echo "Valve's kernel: ${valve_now:0:12}"
+            fi
+            echo
             echo '```'
-            python3 -c 'import json; print(json.load(open("build.json"))["banner"])'
+            jq -r .banner build.json
             cat SHA256SUMS
             echo '```'
           } > ../notes.md
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "$GITHUB_REF_NAME" --notes-file ../notes.md -- *
+          cat ../notes.md
+          # Several headsets share this repository: no release is the latest of all.
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+            --title "$TAG" --notes-file ../notes.md -- *
+
+  ci:
+    # The required check (see the top): fails unless every job before it succeeded, the release only on tags.
+    # A run with `head` runs on its base's commit: its gate is named otherwise, and its verdict goes to `head`.
+    name: ${{ inputs.head && format('verdict for {0}', inputs.head) || 'ci' }}
+    if: always()
+    needs: [plan, kernel, lint, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write # the ci on a layer pull request's head
+    steps:
+      - name: Every job
+        id: verdict
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          RELEASE: ${{ github.ref_type == 'tag' && 'success' || 'skipped' }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$NEEDS" | jq -e --arg release "$RELEASE" \
+            'all(to_entries[]; .value.result == (if .key == "release" then $release else "success" end))' > /dev/null; then
+            echo "state=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=failure" >> "$GITHUB_OUTPUT"
+          fi
+      - name: The layer pull request's ci
+        if: always() && needs.plan.outputs.tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED: ${{ needs.plan.outputs.tested }}
+          STATE: ${{ steps.verdict.outputs.state || 'failure' }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$TESTED" --silent -f state="$STATE" -f context=ci \
+            -f description="its merge into $GITHUB_REF_NAME's headsets: $STATE" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: The verdict
+        env:
+          STATE: ${{ steps.verdict.outputs.state }}
+        run: '[ "$STATE" = success ]'
