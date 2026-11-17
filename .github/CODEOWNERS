@@ -1,0 +1,4 @@
+# Who has to approve a change (docs: GOVERNANCE.md in overpressure/.github). The kernel itself has no owner here:
+# who may merge into which layer branch is a ruleset of that branch, as CODEOWNERS cannot differ between layers
+# that merge into each other.
+/.github/  @overpressure/core
