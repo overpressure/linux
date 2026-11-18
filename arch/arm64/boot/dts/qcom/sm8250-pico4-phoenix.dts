@@ -52,51 +52,21 @@
 	};
 
 	/*
-	 * The stock tree's GPIO keys, with its labels and codes (its "volume_up" sends
-	 * KEY_VOLUMEDOWN, as on PICO OS).
+	 * The stock tree's GPIO key, with its label and code (its "volume_up" sends
+	 * KEY_VOLUMEDOWN, as on PICO OS). The stock tree also declares home, confirm and
+	 * app keys; the PICO 4 has no such buttons and nothing drives their lines.
 	 */
 	gpio-keys {
 		compatible = "gpio-keys";
 		label = "gpio-keys";
 		pinctrl-names = "default";
-		pinctrl-0 = <&key_vol_up_default>, <&key_home_default>, <&key_confirm_default>,
-			    <&app_key_default>;
+		pinctrl-0 = <&key_vol_up_default>;
 
 		key-volume-up {
 			label = "volume_up";
 			gpios = <&pm8150_gpios 6 GPIO_ACTIVE_LOW>;
 			linux,input-type = <EV_KEY>;
 			linux,code = <KEY_VOLUMEDOWN>;
-			wakeup-source;
-			debounce-interval = <15>;
-			linux,can-disable;
-		};
-
-		key-confirm {
-			label = "confirm_key";
-			gpios = <&pm8150_gpios 7 GPIO_ACTIVE_LOW>;
-			linux,input-type = <EV_KEY>;
-			linux,code = <KEY_ENTER>;
-			wakeup-source;
-			debounce-interval = <15>;
-			linux,can-disable;
-		};
-
-		key-home {
-			label = "home";
-			gpios = <&pm8150_gpios 1 GPIO_ACTIVE_LOW>;
-			linux,input-type = <EV_KEY>;
-			linux,code = <KEY_HOME>;
-			wakeup-source;
-			debounce-interval = <15>;
-			linux,can-disable;
-		};
-
-		key-app {
-			label = "app_key";
-			gpios = <&tlmm 40 GPIO_ACTIVE_LOW>;
-			linux,input-type = <EV_KEY>;
-			linux,code = <KEY_BACK>;
 			wakeup-source;
 			debounce-interval = <15>;
 			linux,can-disable;
@@ -458,25 +428,9 @@
 		input-disable;
 	};
 
-	/* The keys' pins as the stock tree configures them. */
-	key_home_default: key-home-default-state {
-		pins = "gpio1";
-		function = "normal";
-		input-enable;
-		bias-pull-up;
-		power-source = <0>;
-	};
-
+	/* The key's pin as the stock tree configures it. */
 	key_vol_up_default: key-vol-up-default-state {
 		pins = "gpio6";
-		function = "normal";
-		input-enable;
-		bias-pull-up;
-		power-source = <1>;
-	};
-
-	key_confirm_default: key-confirm-default-state {
-		pins = "gpio7";
 		function = "normal";
 		input-enable;
 		bias-pull-up;
@@ -866,14 +820,6 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-down;
-	};
-
-	/* The app key's pin as the stock tree configures it. */
-	app_key_default: app-key-default-state {
-		pins = "gpio40";
-		function = "gpio";
-		drive-strength = <6>;
-		bias-pull-up;
 	};
 
 	/* The stock panel pins: the reset (75) and its neighbour 60, driven at 8 mA. */
