@@ -248,14 +248,39 @@ static int vdec_try_fmt(struct file *file, void *fh, struct v4l2_format *f)
 	return 0;
 }
 
+/*
+ * How long G_FMT(CAPTURE) waits for the firmware's first source change while it holds the
+ * client's stream: it parses the headers within a few milliseconds.
+ */
+#define VDEC_FIRST_SRC_CHANGE_MS	1000
+
 static int vdec_check_src_change(struct venus_inst *inst)
 {
 	int ret;
 
 	if (inst->subscriptions & V4L2_EVENT_SOURCE_CHANGE &&
 	    inst->codec_state == VENUS_DEC_STATE_INIT &&
-	    !inst->reconfig)
-		return -EINVAL;
+	    !inst->reconfig) {
+		/*
+		 * A client that queued its stream and asks for the CAPTURE format before the
+		 * source change event, as FFmpeg's v4l2m2m decoders do, gets the format once the
+		 * firmware has parsed the headers instead of an error: FFmpeg drops the packet it
+		 * holds on every failed attempt and then decodes from a stream with holes. The
+		 * wait is iris's at CAPTURE STREAMON. Without a stream there is nothing to wait for.
+		 */
+		if (!inst->streamon_out || !v4l2_m2m_num_src_bufs_ready(inst->m2m_ctx))
+			return -EINVAL;
+
+		ret = wait_event_timeout(inst->reconf_wait, inst->reconfig,
+					 msecs_to_jiffies(VDEC_FIRST_SRC_CHANGE_MS));
+		if (!ret) {
+			dev_dbg(inst->core->dev, VDBGH "no source change within %u ms\n",
+				VDEC_FIRST_SRC_CHANGE_MS);
+			return -EINVAL;
+		}
+
+		return 0;
+	}
 
 	if (inst->subscriptions & V4L2_EVENT_SOURCE_CHANGE)
 		return 0;
