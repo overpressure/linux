@@ -1949,9 +1949,12 @@ static void _dpu_encoder_kickoff_phys(struct dpu_encoder_virt *dpu_enc)
 #define CDM_IDX         26
 #define CWB_IDX         28
 #define  MERGE_3D_IDX   23
-	/* hack CWB related ctl config in DSI path for 2nd dedicated CWB crtc case */
+	/*
+	 * hack CWB related ctl config in DSI path for 2nd dedicated CWB crtc case: the dual DSI
+	 * encoder's, whose second phys it takes; a DP encoder has one and takes the normal path.
+	 */
 	if (dpu_kms->is_dsi_driven_writeback &&
-	    dpu_enc->base.encoder_type != DRM_MODE_ENCODER_VIRTUAL) {
+	    dpu_enc->base.encoder_type == DRM_MODE_ENCODER_DSI && dpu_enc->num_phys_encs > 1) {
 		struct dpu_encoder_phys *phys = dpu_enc->phys_encs[1];
 		ctl = phys->hw_ctl;
 		if (!list_empty(dpu_kms->wb_job_queue)) {
@@ -2279,8 +2282,9 @@ void dpu_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc)
 		phys = dpu_enc->phys_encs[i];
 		ctl = phys->hw_ctl;
 		dpu_kms = phys->dpu_kms;
+		/* The DSI path's CWB, as above: never another encoder's CTL. */
 		if (dpu_kms->is_dsi_driven_writeback &&
-		    drm_enc->encoder_type != DRM_MODE_ENCODER_VIRTUAL) {
+		    drm_enc->encoder_type == DRM_MODE_ENCODER_DSI) {
 			if(!list_empty(dpu_kms->wb_job_queue)) {
 				DPU_DEBUG("job found in wb queue, enable CWB\n");
 				/* hard code WB_1 for master DSI and WB_2 for slave DSI on sm8650 */

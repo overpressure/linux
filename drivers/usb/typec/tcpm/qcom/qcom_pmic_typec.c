@@ -16,6 +16,7 @@
 #include <linux/usb/role.h>
 #include <linux/usb/tcpm.h>
 #include <linux/usb/typec_mux.h>
+#include <drm/bridge/aux-bridge.h>
 #include "qcom_pmic_typec_pdphy.h"
 #include "qcom_pmic_typec_port.h"
 
@@ -219,12 +220,27 @@ static int qcom_pmic_typec_init(struct tcpc_dev *tcpc)
 	return 0;
 }
 
+/* The connector declares a DisplayPort alt mode (altmodes/displayport). */
+static bool qcom_pmic_typec_has_dp_altmode(struct fwnode_handle *connector)
+{
+	struct fwnode_handle *altmodes, *dp;
+
+	altmodes = fwnode_get_named_child_node(connector, "altmodes");
+	if (!altmodes)
+		return false;
+	dp = fwnode_get_named_child_node(altmodes, "displayport");
+	fwnode_handle_put(altmodes);
+	fwnode_handle_put(dp);
+	return dp != NULL;
+}
+
 static int qcom_pmic_typec_probe(struct platform_device *pdev)
 {
 	struct pmic_typec *tcpm;
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	const struct pmic_typec_resources *res;
+	struct auxiliary_device *bridge_dev = NULL;
 	struct regmap *regmap;
 	u32 base[2];
 	int ret;
@@ -290,13 +306,18 @@ static int qcom_pmic_typec_probe(struct platform_device *pdev)
 	if (!tcpm->tcpc.fwnode)
 		return -EINVAL;
 
-#if 0
-	bridge_dev = devm_drm_dp_hpd_bridge_alloc(tcpm->dev, to_of_node(tcpm->tcpc.fwnode));
-	if (IS_ERR(bridge_dev)) {
-		ret = PTR_ERR(bridge_dev);
-		goto fwnode_remove;
+	/*
+	 * A port with a DisplayPort alt mode: the DP controller's bridge chain ends in an HPD
+	 * bridge on the connector, which the alt mode's hot plug events reach. Without one the
+	 * port stays as it was.
+	 */
+	if (qcom_pmic_typec_has_dp_altmode(tcpm->tcpc.fwnode)) {
+		bridge_dev = devm_drm_dp_hpd_bridge_alloc(tcpm->dev, to_of_node(tcpm->tcpc.fwnode));
+		if (IS_ERR(bridge_dev)) {
+			ret = PTR_ERR(bridge_dev);
+			goto fwnode_remove;
+		}
 	}
-#endif
 
 	tcpm->tcpm_port = tcpm_register_port(tcpm->dev, &tcpm->tcpc);
 	if (IS_ERR(tcpm->tcpm_port)) {
@@ -313,6 +334,12 @@ static int qcom_pmic_typec_probe(struct platform_device *pdev)
 					  tcpm->tcpm_port);
 	if (ret)
 		goto fwnode_remove;
+
+	if (bridge_dev) {
+		ret = devm_drm_dp_hpd_bridge_add(tcpm->dev, bridge_dev);
+		if (ret)
+			goto fwnode_remove;
+	}
 
 	return 0;
 
