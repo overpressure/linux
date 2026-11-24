@@ -13,16 +13,45 @@
 #include <linux/regulator/of_regulator.h>
 #include <linux/regmap.h>
 
-#define CMD_OTG 			0x50
 #define OTG_EN				BIT(0)
-#define OTG_CURRENT_LIMIT_CFG		0x53
 #define OTG_CURRENT_LIMIT_MASK		GENMASK(2, 0)
-// The 0 bit in this register's bit field is undocumented
-#define OTG_CFG					0x56
 #define OTG_EN_SRC_CFG			BIT(1)
 
-static const unsigned int curr_table[] = {
+/*
+ * The OTG booster's registers in each PMIC's DC-DC block: PM8550B's at 0x50, 0x53 and 0x56
+ * (the 0 bit in its 0x56 is undocumented), PM8150B's at 0x40, 0x52 and 0x53 with 0.5 A steps
+ * up to 3 A (the stock smb5's DCDC_CMD_OTG, DCDC_OTG_CURRENT_LIMIT_CFG and DCDC_OTG_CFG).
+ */
+struct qcom_usb_vbus_data {
+	unsigned int cmd_otg;
+	unsigned int otg_current_limit_cfg;
+	unsigned int otg_cfg;
+	const unsigned int *curr_table;
+	unsigned int n_current_limits;
+};
+
+static const unsigned int pm8550b_curr_table[] = {
 	1000000, 1250000, 1500000, 1750000, 2000000, 2500000, 3000000, 3500000
+};
+
+static const unsigned int pm8150b_curr_table[] = {
+	500000, 1000000, 1500000, 2000000, 2500000, 3000000
+};
+
+static const struct qcom_usb_vbus_data pm8550b_data = {
+	.cmd_otg = 0x50,
+	.otg_current_limit_cfg = 0x53,
+	.otg_cfg = 0x56,
+	.curr_table = pm8550b_curr_table,
+	.n_current_limits = ARRAY_SIZE(pm8550b_curr_table),
+};
+
+static const struct qcom_usb_vbus_data pm8150b_data = {
+	.cmd_otg = 0x40,
+	.otg_current_limit_cfg = 0x52,
+	.otg_cfg = 0x53,
+	.curr_table = pm8150b_curr_table,
+	.n_current_limits = ARRAY_SIZE(pm8150b_curr_table),
 };
 
 static const struct regulator_ops qcom_usb_vbus_reg_ops = {
@@ -33,24 +62,21 @@ static const struct regulator_ops qcom_usb_vbus_reg_ops = {
 	.set_current_limit = regulator_set_current_limit_regmap,
 };
 
-static struct regulator_desc qcom_usb_vbus_rdesc = {
-	.name = "usb_vbus",
-	.ops = &qcom_usb_vbus_reg_ops,
-	.owner = THIS_MODULE,
-	.type = REGULATOR_VOLTAGE,
-	.curr_table = curr_table,
-	.n_current_limits = ARRAY_SIZE(curr_table),
-};
-
 static int qcom_usb_vbus_regulator_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	const struct qcom_usb_vbus_data *data;
+	struct regulator_desc *rdesc;
 	struct regulator_dev *rdev;
 	struct regmap *regmap;
 	struct regulator_config config = { };
 	struct regulator_init_data *init_data;
 	int ret;
 	u32 base;
+
+	data = of_device_get_match_data(dev);
+	if (!data)
+		return -ENODEV;
 
 	ret = of_property_read_u32(dev->of_node, "reg", &base);
 	if (ret < 0) {
@@ -64,21 +90,30 @@ static int qcom_usb_vbus_regulator_probe(struct platform_device *pdev)
 		return -ENOENT;
 	}
 
-	init_data = of_get_regulator_init_data(dev, dev->of_node,
-					       &qcom_usb_vbus_rdesc);
+	rdesc = devm_kzalloc(dev, sizeof(*rdesc), GFP_KERNEL);
+	if (!rdesc)
+		return -ENOMEM;
+	rdesc->name = "usb_vbus";
+	rdesc->ops = &qcom_usb_vbus_reg_ops;
+	rdesc->owner = THIS_MODULE;
+	rdesc->type = REGULATOR_VOLTAGE;
+	rdesc->curr_table = data->curr_table;
+	rdesc->n_current_limits = data->n_current_limits;
+	rdesc->enable_reg = base + data->cmd_otg;
+	rdesc->enable_mask = OTG_EN;
+	rdesc->csel_reg = base + data->otg_current_limit_cfg;
+	rdesc->csel_mask = OTG_CURRENT_LIMIT_MASK;
+
+	init_data = of_get_regulator_init_data(dev, dev->of_node, rdesc);
 	if (!init_data)
 		return -ENOMEM;
 
-	qcom_usb_vbus_rdesc.enable_reg = base + CMD_OTG;
-	qcom_usb_vbus_rdesc.enable_mask = OTG_EN;
-	qcom_usb_vbus_rdesc.csel_reg = base + OTG_CURRENT_LIMIT_CFG;
-	qcom_usb_vbus_rdesc.csel_mask = OTG_CURRENT_LIMIT_MASK;
 	config.dev = dev;
 	config.init_data = init_data;
 	config.of_node = dev->of_node;
 	config.regmap = regmap;
 
-	rdev = devm_regulator_register(dev, &qcom_usb_vbus_rdesc, &config);
+	rdev = devm_regulator_register(dev, rdesc, &config);
 	if (IS_ERR(rdev)) {
 		ret = PTR_ERR(rdev);
 		dev_err(dev, "not able to register vbus reg %d\n", ret);
@@ -86,13 +121,14 @@ static int qcom_usb_vbus_regulator_probe(struct platform_device *pdev)
 	}
 
 	/* Disable HW logic for VBUS enable */
-	regmap_update_bits(regmap, base + OTG_CFG, OTG_EN_SRC_CFG, 0);
+	regmap_update_bits(regmap, base + data->otg_cfg, OTG_EN_SRC_CFG, 0);
 
 	return 0;
 }
 
 static const struct of_device_id qcom_usb_vbus_regulator_match[] = {
-	{ .compatible = "qcom,pm8550b-vbus-reg" },
+	{ .compatible = "qcom,pm8150b-vbus-reg", .data = &pm8150b_data },
+	{ .compatible = "qcom,pm8550b-vbus-reg", .data = &pm8550b_data },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, qcom_usb_vbus_regulator_match);

@@ -88,6 +88,14 @@ static void qcom_pmic_typec_port_cc_debounce(struct work_struct *work)
 	spin_unlock_irqrestore(&pmic_typec_port->lock, flags);
 
 	dev_dbg(pmic_typec_port->dev, "Debounce cc complete\n");
+
+	/*
+	 * The interrupt handler drops CC changes while the debounce runs, and TCPM's first read of
+	 * the port gets -EBUSY then. A partner attached before the port started, such as a charger
+	 * plugged in at boot, would stay unseen until it is unplugged: report the settled state.
+	 */
+	if (pmic_typec_port->tcpm_port)
+		tcpm_cc_change(pmic_typec_port->tcpm_port);
 }
 
 static irqreturn_t pmic_typec_port_isr(int irq, void *dev_id)
@@ -560,6 +568,10 @@ void qcom_pmic_typec_port_stop(struct pmic_typec_port *pmic_typec_port)
 
 	for (i = 0; i < pmic_typec_port->nr_irqs; i++)
 		disable_irq(pmic_typec_port->irq_data[i].irq);
+
+	/* No settled state for a TCPM port that goes. */
+	cancel_delayed_work_sync(&pmic_typec_port->cc_debounce_dwork);
+	pmic_typec_port->tcpm_port = NULL;
 
 	regulator_force_disable(pmic_typec_port->vdd_vbus);
 	qcom_pmic_typec_port_set_vconn(pmic_typec_port, false);
