@@ -894,9 +894,14 @@
 	status = "okay";
 };
 
-/* Device mode only: the headset is the PC's network adapter, as in stage 1 on the stock kernel. */
+/* Host and device, as stock's drd: the Type-C port's data role decides (device by default). */
 &usb_1_dwc3 {
-	dr_mode = "peripheral";
+	dr_mode = "otg";
+	usb-role-switch;
+};
+
+&usb_1_dwc3_hs_out {
+	remote-endpoint = <&pm8150b_hs_in>;
 };
 
 &usb_1_hsphy {
@@ -905,6 +910,10 @@
 	vdda-pll-supply = <&vreg_l5a_0p88>;
 	vdda18-supply = <&vreg_l12a_1p8>;
 	vdda33-supply = <&vreg_l2a_3p1>;
+};
+
+&usb_1_qmpphy_out {
+	remote-endpoint = <&pm8150b_ss_in>;
 };
 
 &usb_1_qmpphy {
@@ -1612,8 +1621,9 @@
 /*
  * The USB-C port: PM8150B's Type-C block and PD PHY, a sink with the contracts stock's charging
  * uses (below), so that TCPM negotiates a contract and the PD PHY programs the charger's input
- * for it. The data role stays device:
- * the port carries the USB gadget. The PD PHY's supply is the stock one (PM8150's L2); the
+ * for it. The data role is dual: device to a computer (the USB gadget), host after a data role
+ * swap (a dock), dwc3 following it through its role switch; the plug's orientation goes to the
+ * QMP PHY's lanes. The PD PHY's supply is the stock one (PM8150's L2); the
  * VBUS supply is PM8150B's OTG booster, which a sink never enables.
  */
 &pm8150b_typec {
@@ -1624,7 +1634,7 @@
 	connector {
 		compatible = "usb-c-connector";
 		power-role = "sink";
-		data-role = "device";
+		data-role = "dual";
 		self-powered;
 
 		/*
@@ -1635,14 +1645,35 @@
 		 */
 		capabilities {
 			caps-0 {
-				sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+				sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM | PDO_FIXED_DATA_SWAP)>;
 				op-sink-microwatt = <15000000>;
 			};
 
 			caps-1 {
-				sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)
+				sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM | PDO_FIXED_DATA_SWAP)
 					     PDO_FIXED(9000, 3000, PDO_FIXED_USB_COMM)>;
 				op-sink-microwatt = <15000000>;
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				pm8150b_hs_in: endpoint {
+					remote-endpoint = <&usb_1_dwc3_hs_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				pm8150b_ss_in: endpoint {
+					remote-endpoint = <&usb_1_qmpphy_out>;
+				};
 			};
 		};
 	};
