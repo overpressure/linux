@@ -7722,6 +7722,22 @@ unlock:
 	return ret;
 }
 
+/**
+ * tcpm_select_pd - select one of the port's capability sets
+ * @port: the port
+ * @index: the set, in the order of the connector's capabilities node
+ *
+ * What select_usb_power_delivery does from user space, for the port's driver: a sink with an
+ * explicit contract negotiates again with the set's capabilities.
+ */
+int tcpm_select_pd(struct tcpm_port *port, unsigned int index)
+{
+	if (index >= port->pd_count || !port->pds || !port->pds[index])
+		return -EINVAL;
+	return tcpm_pd_set(port->typec_port, port->pds[index]);
+}
+EXPORT_SYMBOL_GPL(tcpm_select_pd);
+
 static const struct typec_operations tcpm_ops = {
 	.try_role = tcpm_try_role,
 	.dr_set = tcpm_dr_set,
