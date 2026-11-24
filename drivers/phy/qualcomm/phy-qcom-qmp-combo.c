@@ -2312,6 +2312,8 @@ struct qmp_combo {
 
 	struct typec_switch_dev *sw;
 	enum typec_orientation orientation;
+	/* A turned plug's orientation while the DP PHY was powered, applied at its power off */
+	enum typec_orientation pending_orientation;
 
 	struct typec_mux_dev *mux;
 };
@@ -3821,6 +3823,30 @@ static int qmp_combo_dp_exit(struct phy *phy)
 	return 0;
 }
 
+static int qmp_combo_usb_power_on(struct phy *phy);
+static int qmp_combo_usb_power_off(struct phy *phy);
+
+/* A new plug orientation: the common block and the USB PHY again, the DP AUX if DP is set up. */
+static void qmp_combo_set_orientation(struct qmp_combo *qmp, enum typec_orientation orientation)
+{
+	const struct qmp_phy_cfg *cfg = qmp->cfg;
+
+	if (orientation == qmp->orientation)
+		return;
+	qmp->orientation = orientation;
+	if (!qmp->init_count)
+		return;
+	if (qmp->usb_init_count)
+		qmp_combo_usb_power_off(qmp->usb_phy);
+	qmp_combo_com_exit(qmp, true);
+
+	qmp_combo_com_init(qmp, true);
+	if (qmp->usb_init_count)
+		qmp_combo_usb_power_on(qmp->usb_phy);
+	if (qmp->dp_init_count)
+		cfg->dp_aux_init(qmp);
+}
+
 static int qmp_combo_dp_power_on(struct phy *phy)
 {
 	struct qmp_combo *qmp = phy_get_drvdata(phy);
@@ -3858,6 +3884,12 @@ static int qmp_combo_dp_power_off(struct phy *phy)
 	writel(DP_PHY_PD_CTL_PSR_PWRDN, qmp->dp_dp_phy + QSERDES_DP_PHY_PD_CTL);
 
 	qmp->dp_powered_on = false;
+
+	/* A plug turned while DP was on: the DP controller stopped the link clocks before this. */
+	if (qmp->pending_orientation != TYPEC_ORIENTATION_NONE) {
+		qmp_combo_set_orientation(qmp, qmp->pending_orientation);
+		qmp->pending_orientation = TYPEC_ORIENTATION_NONE;
+	}
 
 	mutex_unlock(&qmp->phy_mutex);
 
@@ -4427,24 +4459,27 @@ static int qmp_combo_typec_switch_set(struct typec_switch_dev *sw,
 				      enum typec_orientation orientation)
 {
 	struct qmp_combo *qmp = typec_switch_get_drvdata(sw);
-	const struct qmp_phy_cfg *cfg = qmp->cfg;
 
-	if (orientation == qmp->orientation || orientation == TYPEC_ORIENTATION_NONE)
+	if (orientation == TYPEC_ORIENTATION_NONE)
 		return 0;
 
 	mutex_lock(&qmp->phy_mutex);
-	qmp->orientation = orientation;
-
-	if (qmp->init_count) {
-		if (qmp->usb_init_count)
-			qmp_combo_usb_power_off(qmp->usb_phy);
-		qmp_combo_com_exit(qmp, true);
-
-		qmp_combo_com_init(qmp, true);
-		if (qmp->usb_init_count)
-			qmp_combo_usb_power_on(qmp->usb_phy);
-		if (qmp->dp_init_count)
-			cfg->dp_aux_init(qmp);
+	/*
+	 * The DP PHY still drives a link: the plug was turned before the display was switched
+	 * off. Re-initialising now takes the link clocks away under the DP controller, whose next
+	 * register access faults (an SError). As the mode switch, wait: the DP PHY's power off
+	 * applies it.
+	 */
+	if (qmp->dp_powered_on) {
+		if (orientation == qmp->orientation) {
+			qmp->pending_orientation = TYPEC_ORIENTATION_NONE;
+		} else {
+			qmp->pending_orientation = orientation;
+			dev_dbg(qmp->dev, "typec_switch_set: DP PHY is still in use, delaying switch\n");
+		}
+	} else {
+		qmp->pending_orientation = TYPEC_ORIENTATION_NONE;
+		qmp_combo_set_orientation(qmp, orientation);
 	}
 	mutex_unlock(&qmp->phy_mutex);
 
