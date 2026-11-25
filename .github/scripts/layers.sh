@@ -6,9 +6,12 @@
 #
 # For every layer that takes its changes from FROM (.github/layers) and lacks some of FROM's commits,
 # a pull request from FROM into it, unless one is open. A pull request opened with the workflow's own
-# token (GH_TOKEN) starts no workflow, so this starts its Build: a run on the layer with head=FROM, which
-# builds every headset whose branch is the layer or built on it with FROM merged in and sets the status ci
-# on FROM's commit (.github/workflows/build.yml). It is merged with a merge commit, and its merge moves the
+# token (GH_TOKEN) starts no workflow, so this starts their Build: one run with head=FROM, which builds
+# every headset whose branch is built on FROM with FROM merged in and sets the status ci on FROM's commit
+# (.github/workflows/build.yml). All of FROM's pull requests have that commit as their head and share its
+# status, so one run judges them all: a run per pull request would let the quickest one's verdict stand for
+# the others. It runs on FROM itself, except for valve/7.2, whose tree has no workflows: that one runs on its
+# layer (it has one, common/7.2). Each pull request is merged with a merge commit, and its merge moves the
 # change on. An open pull request's Build starts again: FROM may have moved. GitHub also gives such a pull
 # request a run of its own that waits for a maintainer's approval (its author, the workflow's bot, counts as a
 # first-time contributor); that run would only build what the started one builds, so it is deleted.
@@ -31,18 +34,18 @@ drop_waiting() {
 	done
 }
 
-grep -v '^#' "$layers" | while read -r source into; do
+pending=() # the layers with a pull request from FROM, which its Build judges
+while read -r source into; do
 	[ "$source" = "$from" ] || continue
 	ahead=$(gh api "repos/$repo/compare/$into...$from" --jq .ahead_by)
 	if [ "$ahead" = 0 ]; then
 		say "$into has every commit of $from."
 		continue
 	fi
+	pending+=("$into")
 	open=$(gh pr list --repo "$repo" --head "$from" --base "$into" --state open --json number --jq '.[0].number // empty')
 	if [ -n "$open" ]; then
-		gh workflow run build.yml --repo "$repo" --ref "$into" -f head="$from"
-		say "$from into $into: #$open is open ($ahead commits); its Build started."
-		drop_waiting "$from"
+		say "$from into $into: #$open is open ($ahead commits)."
 		continue
 	fi
 	head=$(gh api "repos/$repo/branches/$from" --jq .commit.sha)
@@ -66,7 +69,15 @@ grep -v '^#' "$layers" | while read -r source into; do
 		echo "A conflict is resolved here. Nothing is released until a headset's tag."
 	} > "$body"
 	gh pr create --repo "$repo" --head "$from" --base "$into" --title "$title" --body-file "$body" >/dev/null
-	gh workflow run build.yml --repo "$repo" --ref "$into" -f head="$from"
-	say "$from into $into: pull request opened ($ahead commits), its Build started."
-	drop_waiting "$from"
-done
+	say "$from into $into: pull request opened ($ahead commits)."
+done < <(grep -v '^#' "$layers")
+
+[ ${#pending[@]} -gt 0 ] || exit 0
+# One Build for all of FROM's pull requests (see the top): on FROM, or on valve/7.2's one layer.
+ref=$from
+if [ "$from" = valve/7.2 ]; then
+	ref=${pending[0]}
+fi
+gh workflow run build.yml --repo "$repo" --ref "$ref" -f head="$from"
+say "$from into ${pending[*]}: their Build started, on $ref."
+drop_waiting "$from"

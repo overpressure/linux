@@ -14,7 +14,7 @@ tag by commit and file hashes.
 | `common/7.2` | fixes any headset on Valve's tree can meet, and this repository's CI (`.github/`) |
 | `sm8250/7.2` | the Snapdragon XR2's (SM8250) blocks |
 | `phoenix/7.2` | the PICO 4 ([overpressure/phoenix](https://github.com/overpressure/phoenix)): its drivers, device tree, `arch/arm64/configs/pico4.config` and driver tests; the default branch |
-| `hollywood/7.2` | the Meta Quest 2 ([overpressure/hollywood](https://github.com/overpressure/hollywood)): its drivers, device tree and configuration, on `sm8250/7.2`; it joins [`.github/layers`](layers) and is built once overpressure/hollywood has its `kernel/build-tree.sh` |
+| `hollywood/7.2` | the Meta Quest 2 ([overpressure/hollywood](https://github.com/overpressure/hollywood)): its drivers, device tree and configuration, on `sm8250/7.2`; built once overpressure/hollywood has its `kernel/build-tree.sh`, until then its pushes and pull requests build nothing and pass |
 
 [`.github/layers`](layers) lists each branch and the branch it takes its changes from. A headset's branch is named
 after its repository, `overpressure/<headset>`, whose `kernel/build-tree.sh` builds it; the PICO 4's layers are
@@ -29,7 +29,7 @@ by such pull requests with a passing `ci` check, `valve/7.2` only move forward, 
 | Workflow | When | What |
 | --- | --- | --- |
 | [Valve](workflows/valve.yml) | Mondays 05:23 UTC, and by hand | moves `valve/7.2` forward to Valve's newest commit ([scripts/valve.sh](scripts/valve.sh)) and starts Layers for it; a rewritten Valve branch fails the run. A schedule runs only from the default branch's copy |
-| [Layers](workflows/layers.yml) | a push to a layer, and by hand | opens a pull request from the branch into every layer built on it that lacks its commits, unless one is open, and starts its Build ([scripts/layers.sh](scripts/layers.sh)) |
+| [Layers](workflows/layers.yml) | a push to a layer, and by hand | opens a pull request from the branch into every layer built on it that lacks its commits, unless one is open, and starts one Build for them ([scripts/layers.sh](scripts/layers.sh)) |
 | [Build](workflows/build.yml) | pull requests, pushes to a headset's branch, tags, and the Layers workflow's runs for its pull requests | builds each headset's kernel; for a pull request into a layer without a headset, every headset's branch built on it with the pull request merged in; lints the scripts and workflows; releases tags. Its `ci` job is the required check |
 
 Each week, after the Valve workflow: review and merge its pull request into `common/7.2`, then the pull requests that
@@ -64,11 +64,12 @@ tag, its own release checklist verifies it on the hardware (phoenix's
 ## The layers' pull requests
 
 Layers opens its pull requests with the workflow's own token, and a pull request opened with it starts no workflow.
-So Layers starts each one's Build itself: a run on the pull request's base branch with `head` set to the branch
-that moves up (`valve/7.2` among them, whose tree has no workflows). It builds every headset's branch on that base
-with `head` merged in, and sets the status `ci` on `head`'s commit, the check the pull request waits for. Its own
-gate job is named `verdict for <head>`: that run belongs to the base's commit, which another pull request may have
-as its head.
+So Layers starts their Build itself: one run with `head` set to the branch that moves up, on that branch, or on its
+one layer for `valve/7.2`, whose tree has no workflows. It builds every headset's branch built on it with `head`
+merged in, and sets the status `ci` on `head`'s commit, the check its pull requests wait for. All of a branch's
+pull requests (`sm8250/7.2` into `phoenix/7.2` and into `hollywood/7.2`) have that commit as their head and share
+its status, so one run judges them all; a run per pull request would let the quickest one's verdict stand for the
+others. Its own gate job is named `verdict for <head>`, so that the run's own check never stands for the status.
 
 Each content is built once. A check of a change is keyed by the kernel's sources (the tree without `.github/`, so a
 change to the CI alone builds nothing new), so the layers' pull requests find the build of the pull request that
