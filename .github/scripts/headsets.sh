@@ -5,7 +5,8 @@
 #   headsets.sh [--self] REF
 #
 # REF is a branch or tag of this repository. When its first part names a headset (a repository
-# <owner>/<headset> with kernel/build-tree.sh), that headset is built from the run's own commit.
+# <owner>/<headset> with kernel/build-tree.sh), that headset is built from the run's own commit; a
+# headset's branch whose repository has no kernel/build-tree.sh yet builds nothing (an empty list).
 # Otherwise REF is a layer: every headset's branch built on it (.github/layers, followed upward) is
 # built with the run's commit merged in. --self refuses a layer: a push builds only a headset's own
 # branch or tag. Prints a JSON list of {device, branch, merge, recipe}, recipe being the commit of the
@@ -32,6 +33,14 @@ entry() {
 sha=$(recipe "${ref%%/*}")
 if [ -n "$sha" ]; then
 	entry "${ref%%/*}" "$ref" false "$sha" | jq -cs .
+	exit 0
+fi
+# A headset's branch (no layer takes its changes from it) whose repository has no kernel/build-tree.sh
+# yet: nothing to build, which is no failure; build.yml's gate passes an empty list.
+if ! grep -v '^#' "$layers" | awk '{print $1}' | grep -qxF "$ref" \
+	&& gh api "repos/$owner/${ref%%/*}" --silent 2>/dev/null; then
+	echo "$ref: $owner/${ref%%/*} has no kernel/build-tree.sh yet: nothing to build" >&2
+	echo '[]'
 	exit 0
 fi
 if $self; then

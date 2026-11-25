@@ -6,10 +6,12 @@
 # - a pull request into a headset's branch builds its merge;
 # - a pull request into a layer without a headset (common/, sm8250/) builds every headset's branch built
 #   on that layer (.github/layers) with the pull request's merge merged in, in the runner, not pushed;
-# - a layer's pull request, which the Layers workflow opens with the workflow's own token (one that starts
-#   no workflow), is built by a run the Layers workflow starts on the pull request's base branch with
-#   `head` (the branch that moves up, valve/7.2 among them, whose tree has no workflows): every headset's
-#   branch on that base is built with `head` merged in, and the run sets the status `ci` on `head`'s commit;
+# - a layer's pull requests, which the Layers workflow opens with the workflow's own token (one that starts
+#   no workflow), are built by one run the Layers workflow starts with `head` (the branch that moves up), on
+#   that branch itself, or on its one layer for valve/7.2, whose tree has no workflows: every headset's
+#   branch built on it is built with `head` merged in, and the run sets the status `ci` on `head`'s commit,
+#   the head of each of those pull requests, once for all of them;
+# - a headset's branch whose repository has no kernel/build-tree.sh yet builds nothing, and passes;
 # - a push to a headset's branch builds it; a tag (<headset>/<version>-<n>) is released with the kernel the
 #   push build of its commit made, and builds only when that commit has no successful push build.
 #
@@ -41,7 +43,7 @@ on:
   workflow_dispatch:
     inputs:
       head:
-        description: "a layer pull request's head (a branch): built merged into each headset branch on this base"
+        description: "the head of a layer's pull requests (a branch): built merged into each headset branch on this ref"
         required: false
         type: string
 
@@ -118,6 +120,8 @@ jobs:
 
   kernel:
     needs: plan
+    # Nothing to build: a headset's branch whose repository has no kernel/build-tree.sh yet.
+    if: needs.plan.outputs.headsets != '[]'
     name: kernel ${{ matrix.headset.device }} (${{ matrix.build }})
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -439,10 +443,12 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
           RELEASE: ${{ github.ref_type == 'tag' && 'success' || 'skipped' }}
+          # The kernel job is skipped only when there is nothing to build (see it): then that passes.
+          KERNEL: ${{ needs.plan.outputs.headsets == '[]' && 'skipped' || 'success' }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          if echo "$NEEDS" | jq -e --arg release "$RELEASE" \
-            'all(to_entries[]; .value.result == (if .key == "release" then $release else "success" end))' > /dev/null; then
+          if echo "$NEEDS" | jq -e --arg release "$RELEASE" --arg kernel "$KERNEL" \
+            'all(to_entries[]; .value.result == (if .key == "release" then $release elif .key == "kernel" then $kernel else "success" end))' > /dev/null; then
             echo "state=success" >> "$GITHUB_OUTPUT"
           else
             echo "state=failure" >> "$GITHUB_OUTPUT"
