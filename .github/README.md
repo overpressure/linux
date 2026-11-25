@@ -14,6 +14,7 @@ tag by commit and file hashes.
 | `common/7.2` | fixes any headset on Valve's tree can meet, and this repository's CI (`.github/`) |
 | `sm8250/7.2` | the Snapdragon XR2's (SM8250) blocks |
 | `phoenix/7.2` | the PICO 4 ([overpressure/phoenix](https://github.com/overpressure/phoenix)): its drivers, device tree, `arch/arm64/configs/pico4.config` and driver tests; the default branch |
+| `hollywood/7.2` | the Meta Quest 2 ([overpressure/hollywood](https://github.com/overpressure/hollywood)): its drivers, device tree and configuration, on `sm8250/7.2`; it joins [`.github/layers`](layers) and is built once overpressure/hollywood has its `kernel/build-tree.sh` |
 
 [`.github/layers`](layers) lists each branch and the branch it takes its changes from. A headset's branch is named
 after its repository, `overpressure/<headset>`, whose `kernel/build-tree.sh` builds it; the PICO 4's layers are
