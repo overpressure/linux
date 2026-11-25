@@ -243,14 +243,30 @@ jobs:
           uv run python -m overpressure container pull
       # A check build compiles through ccache (build-tree.sh's CCACHE_DIR), whose objects carry over from the
       # newest cache this run may read: its own branch's, its base's, the default branch's. A tag's two
-      # builds start clean: they are the test that the kernel is reproducible.
+      # builds start clean: they are the test that the kernel is reproducible. A headset's own cache comes
+      # first. A new headset, which has none yet, starts from the cache of another headset on its SoC's layer
+      # (.github/layers) that the run may read, such as the default branch's: the same compiler and paths, so
+      # every file both configurations compile alike is a hit. The build's ccache statistics show how many.
+      - name: The headsets on its SoC
+        id: caches
+        if: steps.key.outputs.name && steps.earlier.outputs.found != 'true' && github.ref_type != 'tag'
+        env:
+          BRANCH: ${{ matrix.headset.branch }}
+        run: |
+          soc=$(awk -v b="$BRANCH" '!/^#/ && $2 == b {print $1}' .ci/.github/layers)
+          {
+            echo "keys<<EOF"
+            echo "ccache-$DEVICE-"
+            awk -v s="$soc" -v b="$BRANCH" '!/^#/ && $1 == s && $2 != b {split($2, p, "/"); print "ccache-" p[1] "-"}' .ci/.github/layers
+            echo "EOF"
+          } | tee -a "$GITHUB_OUTPUT"
       - name: The compiled objects of earlier builds
         if: steps.key.outputs.name && steps.earlier.outputs.found != 'true' && github.ref_type != 'tag'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: overpressure/out/ccache
           key: ccache-${{ matrix.headset.device }}-${{ github.run_id }}
-          restore-keys: ccache-${{ matrix.headset.device }}-
+          restore-keys: ${{ steps.caches.outputs.keys }}
       - name: The kernel
         if: steps.key.outputs.name && steps.earlier.outputs.found != 'true'
         working-directory: overpressure
