@@ -26,6 +26,7 @@
 #include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
+#include <linux/reboot.h>
 #include <linux/reset-controller.h>
 #include <linux/remoteproc.h>
 #include <linux/sizes.h>
@@ -569,6 +570,108 @@ static void qcom_scm_set_download_mode(u32 dload_mode)
 	if (ret)
 		dev_err(__scm->dev, "failed to set download mode: %d\n", ret);
 }
+
+/* The boot ROM stays in emergency download (EDL) mode when it finds this bit at a restart. */
+#define QCOM_DLOAD_EDL		BIT(0)
+
+/*
+ * A restart with the argument "edl" ends in the boot ROM's EDL mode, as Qualcomm's own kernels
+ * restart into it: the EDL bit in the download-mode register, then the restart. The dump modes'
+ * bits stay as they are; the clean shutdown clears only those.
+ */
+static int qcom_scm_reboot_notify(struct notifier_block *nb, unsigned long action, void *data)
+{
+	/* The firmware sets the mode itself where it offers the call: the mode, then 0. */
+	struct qcom_scm_desc desc = {
+		.svc = QCOM_SCM_SVC_BOOT,
+		.cmd = QCOM_SCM_BOOT_SET_DLOAD_MODE,
+		.arginfo = QCOM_SCM_ARGS(2),
+		.args[0] = QCOM_DLOAD_EDL,
+		.args[1] = 0,
+		.owner = ARM_SMCCC_OWNER_SIP,
+	};
+	const char *cmd = data;
+	unsigned int val = 0;
+	bool call;
+	int ret;
+
+	if (action != SYS_RESTART || !cmd || strcmp(cmd, "edl"))
+		return NOTIFY_DONE;
+
+	call = __qcom_scm_is_call_available(__scm->dev, QCOM_SCM_SVC_BOOT,
+					    QCOM_SCM_BOOT_SET_DLOAD_MODE);
+	if (call)
+		ret = qcom_scm_call_atomic(__scm->dev, &desc, NULL);
+	else
+		ret = qcom_scm_io_rmw(__scm->dload_mode_addr, QCOM_DLOAD_EDL, QCOM_DLOAD_EDL);
+	qcom_scm_io_readl(__scm->dload_mode_addr, &val);
+	if (ret)
+		dev_err(__scm->dev, "failed to set EDL mode: %d\n", ret);
+	else
+		dev_info(__scm->dev, "restarting into EDL mode (%s, download mode 0x%x)\n",
+			 call ? "firmware call" : "register", val);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block qcom_scm_reboot_nb = {
+	.notifier_call = qcom_scm_reboot_notify,
+};
+
+/*
+ * The firmware's power service halts the SPMI PMIC arbiter and drops PS_HOLD: the PMIC then resets
+ * as its PS_HOLD reset type says.
+ */
+#define QCOM_SCM_SVC_PWR			0x09
+#define QCOM_SCM_PWR_DISABLE_PMIC_ARBITER	0x01
+#define QCOM_SCM_PWR_DEASSERT_PS_HOLD		0x02
+
+static bool qcom_scm_ps_hold_restart;
+static bool qcom_scm_arbiter_halt;
+
+/* One atomic call to the firmware with up to two arguments; restart handlers run atomic. */
+static void qcom_scm_restart_call(u32 svc, u32 cmd, unsigned int nargs, u64 arg0, u64 arg1)
+{
+	struct qcom_scm_desc desc = {
+		.svc = svc,
+		.cmd = cmd,
+		.arginfo = QCOM_SCM_ARGS(nargs),
+		.args[0] = arg0,
+		.args[1] = arg1,
+		.owner = ARM_SMCCC_OWNER_SIP,
+	};
+
+	qcom_scm_call_atomic(__scm->dev, &desc, NULL);
+}
+
+/*
+ * A restart into EDL ends as Qualcomm's own kernels end it, right before the reset: the firmware's
+ * debug image (SDI) off again, so that the warm reset does not run it and reset hard from there, the
+ * SPMI PMIC arbiter halted, and PS_HOLD dropped by the firmware. PSCI's system reset does a reset of
+ * its own, after which the boot ROM no longer finds the EDL bit. Ahead of PSCI's handler; where the
+ * last call returns, PSCI's reset follows.
+ */
+static int qcom_scm_restart_notify(struct notifier_block *nb, unsigned long mode, void *data)
+{
+	const char *cmd = data;
+
+	if (!qcom_scm_ps_hold_restart || !cmd || strcmp(cmd, "edl"))
+		return NOTIFY_DONE;
+
+	/* Watchdog debug and SDI off, as qcom_scm_disable_sdi() asks for them. */
+	qcom_scm_restart_call(QCOM_SCM_SVC_BOOT, QCOM_SCM_BOOT_SDI_CONFIG, 2, 1, 0);
+	if (qcom_scm_arbiter_halt)
+		qcom_scm_restart_call(QCOM_SCM_SVC_PWR, QCOM_SCM_PWR_DISABLE_PMIC_ARBITER, 1, 0, 0);
+	qcom_scm_restart_call(QCOM_SCM_SVC_PWR, QCOM_SCM_PWR_DEASSERT_PS_HOLD, 1, 0, 0);
+	pr_emerg("qcom_scm: PS_HOLD stayed up; PSCI's reset follows\n");
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block qcom_scm_restart_nb = {
+	.notifier_call = qcom_scm_restart_notify,
+	.priority = 130,
+};
 
 /**
  * devm_qcom_scm_pas_context_alloc() - Allocate peripheral authentication service
@@ -2886,6 +2989,22 @@ static int qcom_scm_probe(struct platform_device *pdev)
 	 * disabled below by a clean shutdown/reboot.
 	 */
 	qcom_scm_set_download_mode(download_mode);
+
+	/* A restart into EDL sets its bit in the download-mode register. */
+	if (scm->dload_mode_addr) {
+		ret = devm_register_reboot_notifier(&pdev->dev, &qcom_scm_reboot_nb);
+		if (ret)
+			dev_warn(&pdev->dev, "no restart into EDL: %d\n", ret);
+		qcom_scm_ps_hold_restart = __qcom_scm_is_call_available(&pdev->dev, QCOM_SCM_SVC_PWR,
+									QCOM_SCM_PWR_DEASSERT_PS_HOLD);
+		qcom_scm_arbiter_halt = __qcom_scm_is_call_available(&pdev->dev, QCOM_SCM_SVC_PWR,
+								     QCOM_SCM_PWR_DISABLE_PMIC_ARBITER);
+		if (qcom_scm_ps_hold_restart && register_restart_handler(&qcom_scm_restart_nb))
+			qcom_scm_ps_hold_restart = false;
+		dev_info(&pdev->dev, "restart into EDL: %s%s\n",
+			 qcom_scm_ps_hold_restart ? "PS_HOLD" : "PSCI's reset",
+			 qcom_scm_ps_hold_restart && qcom_scm_arbiter_halt ? ", arbiter halted" : "");
+	}
 
 	/*
 	 * Disable SDI if indicated by DT that it is enabled by default.
