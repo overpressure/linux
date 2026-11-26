@@ -198,4 +198,6 @@ int qcom_pmic_typec_port_legacy_cable_reset(struct pmic_typec_port *pmic_typec_p
 
 int qcom_pmic_typec_port_disable_cc(struct pmic_typec_port *pmic_typec_port);
 
+int qcom_pmic_typec_port_reattach(struct pmic_typec_port *pmic_typec_port);
+
 #endif /* __QCOM_PMIC_TYPE_C_PORT_H__ */
