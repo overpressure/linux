@@ -431,6 +431,7 @@ enum aug_req_type {
 
 struct tcpm_port {
 	struct device *dev;
+	struct notifier_block shutdown_nb;	/* resets the contract before a power-off or restart */
 
 	struct mutex lock;		/* tcpm state machine lock */
 	struct kthread_worker *wq;
@@ -8536,15 +8537,25 @@ static enum hrtimer_restart send_discover_timer_handler(struct hrtimer *timer)
 	return HRTIMER_NORESTART;
 }
 
-static int tcpm_power_off_handler(struct sys_off_data *data)
+/*
+ * A power-off or a restart resets the contract from a reboot notifier: they run before
+ * device_shutdown(). The POWER_OFF_PREPARE and RESTART_PREPARE handlers run after it, when the
+ * port's mux or orientation switch may be shut down with its bus already (an I2C one warns
+ * "Transfer while suspended" and leaves the switch as it was).
+ */
+static int tcpm_shutdown_notify(struct notifier_block *nb, unsigned long action, void *data)
 {
-	struct tcpm_port *port = data->cb_data;
+	struct tcpm_port *port = container_of(nb, struct tcpm_port, shutdown_nb);
+
+	if (action != SYS_RESTART && action != SYS_POWER_OFF)
+		return NOTIFY_DONE;
 
 	tcpm_tcpc_reset(port);
-	port->tcpc->disable_pd(port->tcpc);
+	if (port->tcpc->disable_pd)
+		port->tcpc->disable_pd(port->tcpc);
 
 	mdelay(100);
-	return notifier_from_errno(-ETIME);
+	return NOTIFY_DONE;
 }
 
 struct tcpm_port *tcpm_register_port(struct device *dev, struct tcpc_dev *tcpc)
@@ -8658,22 +8669,10 @@ struct tcpm_port *tcpm_register_port(struct device *dev, struct tcpc_dev *tcpc)
 	tcpm_init(port);
 	mutex_unlock(&port->lock);
 
-	err = devm_register_sys_off_handler(port->dev,
-				     SYS_OFF_MODE_POWER_OFF_PREPARE,
-				     SYS_OFF_PRIO_DEFAULT,
-				     &tcpm_power_off_handler,
-				     port);
+	port->shutdown_nb.notifier_call = tcpm_shutdown_notify;
+	err = devm_register_reboot_notifier(port->dev, &port->shutdown_nb);
 	if (err) {
-		dev_err(port->dev, "register power off prepare failed: %d\n", err);
-	}
-
-	err = devm_register_sys_off_handler(port->dev,
-				     SYS_OFF_MODE_RESTART_PREPARE,
-				     SYS_OFF_PRIO_DEFAULT,
-				     &tcpm_power_off_handler,
-				     port);
-	if (err) {
-		dev_err(port->dev, "register restart prepare failed: %d\n", err);
+		dev_err(port->dev, "register reboot notifier failed: %d\n", err);
 	}
 
 	tcpm_log(port, "%s: registered", dev_name(dev));

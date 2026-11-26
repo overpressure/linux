@@ -148,8 +148,9 @@ static int qcom_pmic_typec_disable_pd(struct tcpc_dev *tcpc)
 {
 	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
 
-	qcom_pmic_typec_port_disable_cc(tcpm->pmic_typec_port);
+	/* No new contract once the source attaches again: the PD PHY stops first. */
 	qcom_pmic_typec_pdphy_stop(tcpm->pmic_typec_pdphy);
+	qcom_pmic_typec_port_reattach(tcpm->pmic_typec_port);
 	return 0;
 }
 
