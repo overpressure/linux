@@ -3826,6 +3826,33 @@ static inline void clk_debug_unregister(struct clk_core *core)
 }
 #endif
 
+/*
+ * Move an orphan under the parent it has just found, and with it any prepare/enable count it
+ * has. This is important for CLK_IS_CRITICAL clocks, which are enabled during init but might
+ * not have a parent yet.
+ *
+ * Unlike __clk_set_parent_before() and _after(), this leaves a CLK_OPS_PARENT_ENABLE clock's
+ * parents alone: nothing switches in hardware here. The parent may not be able to run yet (a
+ * DSI PHY's PLL, registered by the PHY's probe before the PHY is powered, fails to lock), and
+ * _after() would then disable and unprepare a parent that never got enabled.
+ */
+static void clk_core_reparent_orphan(struct clk_core *orphan, struct clk_core *parent)
+{
+	unsigned long flags;
+
+	if (orphan->prepare_count) {
+		clk_core_prepare_enable(parent);
+		clk_core_enable_lock(orphan);
+	}
+
+	flags = clk_enable_lock();
+	clk_reparent(orphan, parent);
+	clk_enable_unlock(flags);
+
+	if (orphan->prepare_count)
+		clk_core_disable_lock(orphan);
+}
+
 static void clk_core_reparent_orphans_nolock(void)
 {
 	struct clk_core *orphan;
@@ -3838,16 +3865,9 @@ static void clk_core_reparent_orphans_nolock(void)
 	hlist_for_each_entry_safe(orphan, tmp2, &clk_orphan_list, child_node) {
 		struct clk_core *parent = __clk_init_parent(orphan);
 
-		/*
-		 * We need to use __clk_set_parent_before() and _after() to
-		 * properly migrate any prepare/enable count of the orphan
-		 * clock. This is important for CLK_IS_CRITICAL clocks, which
-		 * are enabled during init but might not have a parent yet.
-		 */
 		if (parent) {
 			/* update the clk tree topology */
-			__clk_set_parent_before(orphan, parent);
-			__clk_set_parent_after(orphan, parent, NULL);
+			clk_core_reparent_orphan(orphan, parent);
 			__clk_recalc_accuracies(orphan);
 			__clk_recalc_rates(orphan, true, 0);
 
