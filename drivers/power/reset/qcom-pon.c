@@ -273,7 +273,11 @@ static int qcom_pon_reboot(struct notifier_block *nb,
 {
 	char *cmd = data;
 
-	if (cmd && !strncmp(cmd, "warm", sizeof("warm"))) {
+	/*
+	 * A restart into EDL mode ("edl", qcom_scm sets the boot ROM's bit) is a warm reset too: a
+	 * hard reset clears the bit.
+	 */
+	if (cmd && (!strncmp(cmd, "warm", sizeof("warm")) || !strcmp(cmd, "edl"))) {
 		printk("%s: action: %lu cmd: %s reboot_mode: %d\n",
 			__func__, action, cmd, reboot_mode);
 		reboot_mode = REBOOT_WARM;
@@ -282,8 +286,13 @@ static int qcom_pon_reboot(struct notifier_block *nb,
 	return NOTIFY_DONE;
 }
 
+/*
+ * Ahead of the other reboot notifiers: pm8941-pwrkey's sets the PMIC's PS_HOLD reset type from
+ * reboot_mode, a hard reset unless it is a warm one.
+ */
 static struct notifier_block qcom_pon_reboot_notifier = {
 	.notifier_call = qcom_pon_reboot,
+	.priority = 1,
 };
 
 static void qcom_reboot_ps_hold_type_setup(struct qcom_pon *pon, unsigned int type)
