@@ -446,6 +446,32 @@ int qcom_pmic_typec_port_disable_cc(struct pmic_typec_port *pmic_typec_port)
 	return 0;
 }
 
+/*
+ * Detach a connected source, so that its contract ends, then turn CC on again as a dual-role port:
+ * CC open until VBUS is at vSafe0V (at most 650 ms, as for a legacy cable), then the mode a port
+ * starts in. The PMIC keeps TYPEC_MODE_CFG while the system is off. With CC left open there, a
+ * charger plugged in after a power-off sees no sink and never turns VBUS on, so nothing starts the
+ * PMIC; one still connected attaches again at vSafe5V.
+ */
+int qcom_pmic_typec_port_reattach(struct pmic_typec_port *pmic_typec_port)
+{
+	unsigned int i = 0;
+	int ret;
+
+	ret = regmap_write(pmic_typec_port->regmap,
+			   pmic_typec_port->base + TYPEC_MODE_CFG_REG,
+			   TYPEC_DISABLE_CMD);
+	if (ret)
+		return ret;
+
+	while (!qcom_pmic_typec_port_is_vbus_vsafe0v(pmic_typec_port) &&
+	       i++ < VBUS_SAFE_TIMEOUT_USEC / VBUS_SAFE_CHECK_PERIOD_USEC)
+		usleep_range(VBUS_SAFE_CHECK_PERIOD_USEC, VBUS_SAFE_CHECK_PERIOD_USEC + 1000);
+
+	return regmap_write(pmic_typec_port->regmap,
+			    pmic_typec_port->base + TYPEC_MODE_CFG_REG, 0);
+}
+
 int qcom_pmic_typec_port_start_toggling(struct pmic_typec_port *pmic_typec_port,
 					enum typec_port_type port_type,
 					enum typec_cc_status cc)
