@@ -1475,13 +1475,31 @@ out:
 
 static void ufshcd_clock_scaling_unprepare(struct ufs_hba *hba, int err)
 {
+	u32 gear_rx;
+	int active;
+	u32 wb_rx;
+
 	blk_mq_unquiesce_tagset(&hba->host->tag_set);
 	up_write(&hba->clk_scaling_lock);
 	mutex_unlock(&hba->wb_mutex);
 
-	/* Enable Write Booster if current gear requires it else disable it */
-	if (ufshcd_enable_wb_if_scaling_up(hba) && !err)
-		ufshcd_wb_toggle(hba, hba->pwr_info.gear_rx >= hba->clk_scaling.wb_gear);
+	/*
+	 * Enable Write Booster if current gear requires it else disable it,
+	 * but only do it if we are sure it is active and runtime PM is enabled
+	 * (if not get_active will get us -EINVAL)
+	 */
+	if (ufshcd_enable_wb_if_scaling_up(hba) && !err) {
+		active = ufshcd_rpm_get_if_active(hba);
+
+		gear_rx = hba->pwr_info.gear_rx;
+		wb_rx = hba->clk_scaling.wb_gear;
+
+		if (active > 0 || active == -EINVAL)
+			ufshcd_wb_toggle(hba, gear_rx >= wb_rx);
+
+		if (active > 0)
+			ufshcd_rpm_put(hba);
+	}
 
 	ufshcd_release(hba);
 }
@@ -3321,8 +3339,12 @@ static int ufshcd_issue_dev_cmd(struct ufs_hba *hba, struct scsi_cmnd *cmd,
 
 	rq->timeout = timeout;
 	sts = blk_execute_rq(rq, true);
-	if (sts != BLK_STS_OK)
+	if (sts != BLK_STS_OK) {
+		if (host_byte(cmd->result) == DID_TIME_OUT)
+			return -ETIMEDOUT;
+
 		return blk_status_to_errno(sts);
+	}
 	return lrbp->utr_descriptor_ptr->header.ocs;
 }
 
@@ -9487,10 +9509,45 @@ out:
 static enum scsi_timeout_action ufshcd_eh_timed_out(struct scsi_cmnd *scmd)
 {
 	struct ufs_hba *hba = shost_priv(scmd->device->host);
+	struct request *rq = scsi_cmd_to_rq(scmd);
+	unsigned long flags;
+	int tag = rq->tag;
+	bool pending;
 
 	if (!hba->pm_op_in_progress) {
 		/* Activate the error handler in the SCSI core. */
 		return SCSI_EH_NOT_HANDLED;
+	}
+
+	/*
+	 * If a device management command timed out. Clear it in the controller
+	 * and fail it.
+	 * Don't run link recovery for it, recovery re-initializes the device
+	 * with NOP OUT and query requests, which need the reserved tag, and
+	 * that tag stays allocated until this function returns because the
+	 * blk-mq timeout handler holds a reference to @scmd's request. Every
+	 * recovery command would fail with -ENOMEM and the host would be left
+	 * in UFSHCD_STATE_ERROR.
+	 */
+	if (!ufshcd_is_scsi_cmd(scmd) && !ufshcd_clear_cmd(hba, tag)) {
+		dev_err(hba->dev, "timed out device command tag %d cleared\n",
+			tag);
+
+		if (!hba->mcq_enabled) {
+			spin_lock_irqsave(&hba->outstanding_lock, flags);
+			pending = __test_and_clear_bit(tag,
+						&hba->outstanding_reqs);
+			spin_unlock_irqrestore(&hba->outstanding_lock,
+					       flags);
+			/* The completion path has claimed it. */
+			if (!pending)
+				return SCSI_EH_DONE;
+		}
+
+		set_host_byte(scmd, DID_TIME_OUT);
+		scsi_done(scmd);
+
+		return SCSI_EH_DONE;
 	}
 
 	/*
@@ -9507,9 +9564,6 @@ static enum scsi_timeout_action ufshcd_eh_timed_out(struct scsi_cmnd *scmd)
 	 */
 	if (!test_bit(SCMD_STATE_COMPLETE, &scmd->state)) {
 		if (!hba->mcq_enabled) {
-			unsigned long flags;
-			struct request *rq = scsi_cmd_to_rq(scmd);
-
 			spin_lock_irqsave(&hba->outstanding_lock, flags);
 			__clear_bit(rq->tag, &hba->outstanding_reqs);
 			spin_unlock_irqrestore(&hba->outstanding_lock, flags);

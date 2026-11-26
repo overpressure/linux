@@ -100,7 +100,6 @@ struct platform_inst_caps {
 	u32 mb_cycles_fw;
 	u32 mb_cycles_fw_vpp;
 	u32 max_frame_rate;
-	u32 max_operating_rate;
 };
 
 enum platform_inst_fw_cap_type {
@@ -274,6 +273,11 @@ struct iris_firmware_data {
 	unsigned int dec_output_prop_vp9_size;
 	const u32 *dec_output_prop_av1;
 	unsigned int dec_output_prop_av1_size;
+
+	const u32 *enc_input_prop;
+	unsigned int enc_input_prop_size;
+	const u32 *enc_output_prop;
+	unsigned int enc_output_prop_size;
 
 	const u32 *dec_ip_int_buf_tbl;
 	unsigned int dec_ip_int_buf_tbl_size;

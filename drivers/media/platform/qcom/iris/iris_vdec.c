@@ -273,7 +273,7 @@ int iris_vdec_s_fmt(struct iris_inst *inst, struct v4l2_format *f)
 
 	q = v4l2_m2m_get_vq(inst->m2m_ctx, f->type);
 
-	if (vb2_is_busy(q))
+	if (V4L2_TYPE_IS_CAPTURE(f->type) ? vb2_is_streaming(q) : vb2_is_busy(q))
 		return -EBUSY;
 
 	/* Width and height are optional, so fall back to a valid placeholder
@@ -462,6 +462,7 @@ bool iris_vdec_wait_first_ipsc(struct iris_inst *inst)
 	bool waited = false;
 
 	while (inst->state == IRIS_INST_INPUT_STREAMING &&
+	       !inst->fw_min_count &&
 	       !(inst->sub_state & IRIS_INST_SUB_FIRST_IPSC) &&
 	       iris_vdec_input_with_fw(inst) && time_before(jiffies, timeout)) {
 		waited = true;
